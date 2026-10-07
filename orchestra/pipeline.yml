@@ -1,0 +1,70 @@
+# The one Orchestra pipeline for the retail demo: generate → validate → dbt_build.
+# Groups are owned per skill (retail-data-generator: generate, validate;
+# retail-dbt-analytics: dbt_build; lightdash-dashboards: refresh_dashboards + alerts).
+# Secrets live on the Orchestra connections, never here. Every DuckDB task sets HOME=/tmp
+# because Orchestra runners have no $HOME (DuckDB needs one to install extensions).
+version: v1
+name: retail_dummy_data
+configuration:
+  retries: 1
+  retry_delay: 5   # minutes
+alerts:
+  - name: retail_pipeline_failed
+    statuses: [FAILED]
+    destinations:
+      - integration: EMAIL
+        destination: usman.altaf@quantspark.com
+pipeline:
+  generate:
+    name: Generate retail data
+    tasks:
+      generate_retail:
+        name: Generate retail data
+        integration: PYTHON
+        integration_job: PYTHON_EXECUTE_SCRIPT
+        connection: python_retail_59228
+        parameters:
+          source: GIT
+          command: python generate_retail.py --mode incremental --target parquet
+          package_manager: PIP
+          python_version: "3.12"
+          build_command: pip install -r requirements.txt
+          project_dir: retail-data-generator
+          shallow_clone_dirs: retail-data-generator
+          environment_variables: '{"HOME": "/tmp", "RETAIL_OUTPUT": "gs://qs_orchestra/retail/prod", "RETAIL_SEED": "42"}'
+  validate:
+    name: Validate retail data
+    depends_on: [generate]
+    tasks:
+      validate_retail:
+        name: Validate retail data
+        integration: PYTHON
+        integration_job: PYTHON_EXECUTE_SCRIPT
+        connection: python_retail_59228
+        parameters:
+          source: GIT
+          command: python validate_retail.py --target parquet
+          package_manager: PIP
+          python_version: "3.12"
+          build_command: pip install -r requirements.txt
+          project_dir: retail-data-generator
+          shallow_clone_dirs: retail-data-generator
+          environment_variables: '{"HOME": "/tmp", "RETAIL_OUTPUT": "gs://qs_orchestra/retail/prod"}'
+  dbt_build:
+    name: dbt build
+    depends_on: [validate]
+    tasks:
+      dbt_build_prod:
+        name: dbt build prod
+        integration: DBT_CORE
+        integration_job: DBT_CORE_EXECUTE
+        connection: dbt_retail_93838
+        parameters:
+          # dbt-core / dbt-duckdb versions are pinned in retail-dbt/requirements.txt
+          commands: dbt deps; dbt build --target prod
+          package_manager: PIP
+          python_version: "3.12"
+          use_state_orchestration: false
+          project_dir: retail-dbt
+          shallow_clone_dirs: retail-dbt
+          environment_variables: '{"HOME": "/tmp"}'
