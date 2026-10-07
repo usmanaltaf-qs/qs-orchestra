@@ -1,0 +1,50 @@
+chartConfig:
+  config:
+    comparisonFormat: raw
+    comparisonLabel: vs previous month
+    flipColors: true
+    label: Return rate
+    selectedField: rpt_daily_sales_return_rate
+    showBigNumberLabel: true
+    showComparison: true
+  type: big_number
+contentType: chart
+description: Return rate, last full month vs the month before.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - rpt_daily_sales_date_day_month
+  exploreName: rpt_daily_sales
+  filters:
+    dimensions:
+      and:
+        - id: 55830095-59b7-4f05-a82b-15e384450c25
+          operator: inThePast
+          settings:
+            completed: true
+            unitOfTime: months
+          target:
+            fieldId: rpt_daily_sales_date_day_day
+          values:
+            - 2
+      id: 08f471d3-c6f6-44ec-8647-56c139006796
+  limit: 2
+  metricOverrides: {}
+  metrics:
+    - rpt_daily_sales_return_rate
+  sorts:
+    - descending: true
+      fieldId: rpt_daily_sales_date_day_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Exec - Return rate
+slug: exec-return-rate
+spaceSlug: exec-overview
+tableConfig:
+  columnOrder:
+    - rpt_daily_sales_date_day_month
+    - rpt_daily_sales_return_rate
+tableName: rpt_daily_sales
+verification: null
+version: 1

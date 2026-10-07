@@ -1,0 +1,46 @@
+chartConfig:
+  config:
+    hideRowNumbers: false
+    showTableNames: false
+  type: table
+contentType: chart
+description: Physical stores ranked by net sales, with gross margin % and return rate.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - dim_stores_store_name
+  exploreName: rpt_daily_sales
+  filters:
+    dimensions:
+      and:
+        - id: c19cb54b-8ce4-48cb-9dc1-ac1468a62e3e
+          operator: notEquals
+          target:
+            fieldId: dim_stores_store_type
+          values:
+            - online
+      id: ce682077-2677-4b62-bdec-18685a74cd58
+  limit: 10
+  metricOverrides: {}
+  metrics:
+    - rpt_daily_sales_total_net_sales
+    - rpt_daily_sales_gross_margin_pct
+    - rpt_daily_sales_return_rate
+  sorts:
+    - descending: true
+      fieldId: rpt_daily_sales_total_net_sales
+  tableCalculations: []
+  timezone: project_timezone
+name: Exec - Top 10 stores by net sales
+slug: exec-top-stores
+spaceSlug: exec-overview
+tableConfig:
+  columnOrder:
+    - dim_stores_store_name
+    - rpt_daily_sales_total_net_sales
+    - rpt_daily_sales_gross_margin_pct
+    - rpt_daily_sales_return_rate
+tableName: rpt_daily_sales
+verification: null
+version: 1

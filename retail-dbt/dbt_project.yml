@@ -1,0 +1,26 @@
+name: retail
+version: "1.0.0"
+config-version: 2
+profile: retail
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # dim_date spans these; wide enough for signups (3y before data) plus headroom
+  date_spine_start: "2020-01-01"
+  date_spine_end: "2028-01-01"
+  # fct_order_lines reprocesses this many days of orders (and of returns) on incremental runs
+  incremental_lookback_days: 3
+
+models:
+  retail:
+    staging:
+      +materialized: view
+    intermediate:
+      +materialized: view
+    marts:
+      +materialized: table

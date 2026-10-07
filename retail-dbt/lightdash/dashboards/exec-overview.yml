@@ -1,0 +1,219 @@
+config:
+  isDateZoomDisabled: false
+contentType: dashboard
+description: >-
+  Headline sales, margin and returns. Big numbers compare the last full month
+  with the month before.
+filters:
+  dimensions:
+    - label: Date
+      operator: inThePast
+      settings:
+        completed: false
+        unitOfTime: days
+      target:
+        fieldId: rpt_daily_sales_date_day_day
+        tableName: rpt_daily_sales
+      tileTargets:
+        exec-aov: false
+        exec-gross-margin-pct: false
+        exec-net-sales: false
+        exec-net-sales-by-category:
+          fieldId: rpt_daily_sales_date_day_day
+          tableName: rpt_daily_sales
+        exec-net-sales-by-channel-month:
+          fieldId: rpt_daily_sales_date_day_day
+          tableName: rpt_daily_sales
+        exec-net-sales-weekly-yoy: false
+        exec-orders: false
+        exec-return-rate: false
+        exec-top-stores:
+          fieldId: rpt_daily_sales_date_day_day
+          tableName: rpt_daily_sales
+      values:
+        - 90
+    - label: Channel
+      operator: equals
+      target:
+        fieldId: rpt_daily_sales_channel
+        tableName: rpt_daily_sales
+      tileTargets:
+        exec-aov:
+          fieldId: fct_orders_channel
+          tableName: fct_orders
+        exec-gross-margin-pct:
+          fieldId: rpt_daily_sales_channel
+          tableName: rpt_daily_sales
+        exec-net-sales:
+          fieldId: rpt_daily_sales_channel
+          tableName: rpt_daily_sales
+        exec-net-sales-by-category:
+          fieldId: rpt_daily_sales_channel
+          tableName: rpt_daily_sales
+        exec-net-sales-by-channel-month:
+          fieldId: rpt_daily_sales_channel
+          tableName: rpt_daily_sales
+        exec-net-sales-weekly-yoy:
+          fieldId: rpt_daily_sales_channel
+          tableName: rpt_daily_sales
+        exec-orders:
+          fieldId: fct_orders_channel
+          tableName: fct_orders
+        exec-return-rate:
+          fieldId: rpt_daily_sales_channel
+          tableName: rpt_daily_sales
+        exec-top-stores:
+          fieldId: rpt_daily_sales_channel
+          tableName: rpt_daily_sales
+      values: []
+    - label: Region
+      operator: equals
+      target:
+        fieldId: dim_stores_region
+        tableName: dim_stores
+      tileTargets:
+        exec-aov:
+          fieldId: dim_stores_region
+          tableName: dim_stores
+        exec-gross-margin-pct:
+          fieldId: dim_stores_region
+          tableName: dim_stores
+        exec-net-sales:
+          fieldId: dim_stores_region
+          tableName: dim_stores
+        exec-net-sales-by-category:
+          fieldId: dim_stores_region
+          tableName: dim_stores
+        exec-net-sales-by-channel-month:
+          fieldId: dim_stores_region
+          tableName: dim_stores
+        exec-net-sales-weekly-yoy:
+          fieldId: dim_stores_region
+          tableName: dim_stores
+        exec-orders:
+          fieldId: dim_stores_region
+          tableName: dim_stores
+        exec-return-rate:
+          fieldId: dim_stores_region
+          tableName: dim_stores
+        exec-top-stores:
+          fieldId: dim_stores_region
+          tableName: dim_stores
+      values: []
+  metrics: []
+  tableCalculations: []
+name: Exec overview
+slug: exec-overview
+spaceSlug: exec-overview
+tabs: []
+tiles:
+  - h: 4
+    properties:
+      chartName: Exec - Net sales
+      chartSlug: exec-net-sales
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: exec-net-sales
+    type: saved_chart
+    w: 7
+    x: 0
+    "y": 0
+  - h: 4
+    properties:
+      chartName: Exec - Orders
+      chartSlug: exec-orders
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: exec-orders
+    type: saved_chart
+    w: 7
+    x: 7
+    "y": 0
+  - h: 4
+    properties:
+      chartName: Exec - AOV
+      chartSlug: exec-aov
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: exec-aov
+    type: saved_chart
+    w: 7
+    x: 14
+    "y": 0
+  - h: 4
+    properties:
+      chartName: Exec - Gross margin %
+      chartSlug: exec-gross-margin-pct
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: exec-gross-margin-pct
+    type: saved_chart
+    w: 7
+    x: 21
+    "y": 0
+  - h: 4
+    properties:
+      chartName: Exec - Return rate
+      chartSlug: exec-return-rate
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: exec-return-rate
+    type: saved_chart
+    w: 8
+    x: 28
+    "y": 0
+  - h: 9
+    properties:
+      chartName: Exec - Net sales by week, this year vs last year
+      chartSlug: exec-net-sales-weekly-yoy
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: exec-net-sales-weekly-yoy
+    type: saved_chart
+    w: 36
+    x: 0
+    "y": 4
+  - h: 9
+    properties:
+      chartName: Exec - Net sales by channel by month
+      chartSlug: exec-net-sales-by-channel-month
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: exec-net-sales-by-channel-month
+    type: saved_chart
+    w: 18
+    x: 0
+    "y": 13
+  - h: 9
+    properties:
+      chartName: Exec - Net sales by category
+      chartSlug: exec-net-sales-by-category
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: exec-net-sales-by-category
+    type: saved_chart
+    w: 18
+    x: 18
+    "y": 13
+  - h: 9
+    properties:
+      chartName: Exec - Top 10 stores by net sales
+      chartSlug: exec-top-stores
+      hideTitle: false
+      title: ""
+    tabSlug: null
+    tileSlug: exec-top-stores
+    type: saved_chart
+    w: 36
+    x: 0
+    "y": 22
+verification: null
+version: 1

@@ -1,0 +1,292 @@
+version: 2
+
+models:
+  - name: dim_date
+    description: Calendar day dimension with ISO week, weekend flag and UK retail season.
+    columns:
+      - name: date_day
+        description: Primary key.
+        data_tests: [unique, not_null]
+        config:
+          meta:
+            dimension: {hidden: true}
+      - name: iso_year
+        description: ISO-8601 year (pairs with iso_week; differs from the calendar year around New Year).
+        config:
+          meta:
+            dimension: {label: ISO year, format: '0'}
+      - name: iso_week
+        description: ISO-8601 week number, 1-53.
+        config:
+          meta:
+            dimension: {label: ISO week}
+      - name: retail_season
+        description: Black Friday week, Christmas, January sale or Regular.
+        config:
+          meta:
+            dimension: {label: Retail season}
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [Black Friday week, Christmas, January sale, Regular]
+
+  - name: dim_customers
+    description: >
+      Customers with lifetime stats from completed orders. Recency and is_active are measured
+      against the latest order date in the data.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: cohort_month
+        description: Month of first completed order; NULL if none.
+      - name: lifetime_net_sales
+        description: Net sales across all completed orders.
+      - name: is_active
+        description: At least one completed order in the trailing 90 days.
+      - name: value_segment
+        description: Top 10% / Next 40% / Rest by lifetime net sales among buyers; No orders otherwise.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [Top 10%, Next 40%, Rest, No orders]
+
+  - name: dim_products
+    description: Products with price band and list-price margin.
+    columns:
+      - name: product_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: price_band
+        description: List price band.
+      - name: margin_pct
+        description: (list_price - unit_cost) / list_price.
+
+  - name: dim_stores
+    description: Physical stores plus an Online row with store_id = 0.
+    columns:
+      - name: store_id
+        description: Primary key; 0 = Online.
+        data_tests: [unique, not_null]
+        config:
+          meta:
+            dimension: {hidden: true}
+      - name: store_name
+        description: Store name, or Online.
+        config:
+          meta:
+            dimension: {label: Store}
+      - name: region
+        description: UK region, or Online.
+        config:
+          meta:
+            dimension: {label: Region}
+      - name: store_type
+        description: flagship, standard, outlet or online.
+        config:
+          meta:
+            dimension: {label: Store type}
+      - name: is_online
+        description: True only for the Online row.
+
+  - name: fct_order_lines
+    description: >
+      One row per order line (incremental, merge on order_item_id). All line measures, which
+      count only completed orders, plus return status and refund.
+    columns:
+      - name: order_item_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Parent order.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('fct_orders')
+                field: order_id
+      - name: product_id
+        description: Product.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+      - name: store_id
+        description: Store, 0 = Online.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_stores')
+                field: store_id
+      - name: customer_id
+        description: Customer; NULL = guest.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: order_date
+        description: Order date.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: net_sales
+        description: line_total on completed orders, else 0.
+      - name: is_returned
+        description: The line has a return.
+      - name: refund_amount
+        description: Refund on this line, 0 if not returned.
+
+  - name: fct_orders
+    description: One row per order, every status. Sales measures are 0 unless completed.
+    config:
+      meta:
+        label: Orders
+        joins:
+          - join: dim_stores
+            label: Store
+            sql_on: ${fct_orders.store_id} = ${dim_stores.store_id}
+            fields: [store_name, region, store_type]
+        metrics:
+          orders:
+            label: Orders
+            description: Completed orders.
+            type: count_distinct
+            sql: ${TABLE}.order_id
+            filters:
+              - status: completed
+          order_net_sales:
+            label: Net sales (orders)
+            description: Helper for AOV; use Daily sales > Net sales for reporting.
+            type: sum
+            sql: ${TABLE}.net_sales
+            hidden: true
+          aov:
+            label: AOV
+            description: Net sales / completed orders.
+            type: number
+            sql: ${order_net_sales} / NULLIF(${orders}, 0)
+            format: '[$£]#,##0.00'
+    columns:
+      - name: order_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+        config:
+          meta:
+            dimension: {hidden: true}
+      - name: status
+        description: completed, cancelled or pending.
+        config:
+          meta:
+            dimension: {label: Status}
+      - name: channel
+        description: store or online.
+        config:
+          meta:
+            dimension: {label: Channel}
+      - name: store_id
+        description: Store, 0 = Online.
+        config:
+          meta:
+            dimension: {hidden: true}
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_stores')
+                field: store_id
+      - name: customer_id
+        description: Customer; NULL = guest.
+        config:
+          meta:
+            dimension: {hidden: true}
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id
+      - name: order_date
+        description: Order date.
+        config:
+          meta:
+            dimension:
+              label: Order date
+              type: date
+              time_intervals: [DAY, WEEK, MONTH, QUARTER, YEAR]
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: order_value
+        description: Raw basket value (sum of line_total) regardless of status.
+        config:
+          meta:
+            dimension: {hidden: true}
+      - name: net_sales
+        description: Sum of line net_sales; 0 for cancelled/pending.
+        config:
+          meta:
+            dimension: {hidden: true}
+      - name: has_return
+        description: At least one line was returned.
+
+  - name: fct_returns
+    description: One row per return, with order context where the order line is in the data.
+    columns:
+      - name: return_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: order_item_id
+        description: Returned line.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('fct_order_lines')
+                field: order_item_id
+              config:
+                where: has_order_line
+      - name: return_date
+        description: Date refunds are reported on.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: days_to_return
+        description: return_date - order_date in days.
+      - name: has_order_line
+        description: False for returns of orders placed before the data starts.
+
+  - name: fct_inventory_snapshots
+    description: Stock snapshot per date, store and product, with stockout flag and weeks of cover.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [snapshot_date, store_id, product_id]
+    columns:
+      - name: store_id
+        description: Physical store.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_stores')
+                field: store_id
+      - name: product_id
+        description: Product.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+      - name: is_stockout
+        description: on_hand_qty = 0.
+      - name: trailing_28d_units_sold
+        description: Completed in-store units of this product at this store over the 28 days to the snapshot.
+      - name: weeks_of_cover
+        description: on_hand_qty / average weekly units sold; NULL when nothing sold.

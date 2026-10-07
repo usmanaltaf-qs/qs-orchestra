@@ -1,0 +1,22 @@
+# Committed on purpose: secrets only come in via env_var().
+# Sources are read from RETAIL_SOURCE_URI (local dir in dev, gs://<bucket>/retail/<env> in prod).
+retail:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    dev:
+      type: duckdb
+      path: dev.duckdb
+      schema: main
+      threads: 4
+    prod:
+      type: duckdb
+      # Lightdash only reads the token from the profile (query parameter or settings, and
+      # settings fails in dbt-duckdb). `dbt debug` prints the path, so don't share its output.
+      path: "md:retail_analytics?motherduck_token={{ env_var('MOTHERDUCK_TOKEN', '') }}"
+      schema: main
+      threads: 4
+      extensions: [httpfs]
+      secrets:
+        - type: gcs
+          key_id: "{{ env_var('GCS_HMAC_KEY_ID', '') }}"
+          secret: "{{ env_var('GCS_HMAC_SECRET', '') }}"

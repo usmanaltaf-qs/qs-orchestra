@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: int_order_lines_enriched
+    description: >
+      order_items joined to orders and products. Adds status, channel, store_id (0 for
+      online), customer_id, unit_cost, category and the line measures gross_sales,
+      net_sales, discount_amount and cogs, which are 0 unless the order is completed.
+    columns:
+      - name: order_item_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: store_id
+        description: Store, or 0 for online orders.
+        data_tests: [not_null]
+      - name: is_completed
+        description: True when the order status is completed.
+      - name: gross_sales
+        description: quantity * unit_price on completed orders.
+      - name: net_sales
+        description: line_total on completed orders.
+      - name: discount_amount
+        description: gross_sales - net_sales.
+      - name: cogs
+        description: quantity * unit_cost on completed orders.
+
+  - name: int_customer_orders
+    description: One row per customer with at least one completed order.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests:
+          - unique
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_retail__customers')
+                field: customer_id
+      - name: first_order_date
+        description: Date of first completed order.
+      - name: last_order_date
+        description: Date of most recent completed order.
+      - name: order_count
+        description: Number of completed orders.
+      - name: lifetime_net_sales
+        description: Sum of net_sales across completed orders.

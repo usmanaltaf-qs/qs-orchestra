@@ -1,0 +1,30 @@
+version: 2
+
+sources:
+  - name: retail
+    description: >
+      Raw Parquet from retail-data-generator, read in place. Dims are single files, facts are
+      Hive-partitioned by date. RETAIL_SOURCE_URI points at the root (../data locally,
+      gs://<bucket>/retail/<env> in prod).
+    meta:
+      external_location: "read_parquet('{{ env_var('RETAIL_SOURCE_URI', '../data') }}/{name}/**/*.parquet', hive_partitioning = true, union_by_name = true)"
+    tables:
+      - name: customers
+        description: Customer master, rewritten every run. ~2% NULL emails, ~1% messy cities.
+      - name: products
+        description: Product catalogue with list price and unit cost (GBP).
+      - name: stores
+        description: Physical stores. Online orders have NULL store_id.
+      - name: orders
+        description: One row per order, partitioned by order_date.
+        config:
+          loaded_at_field: order_ts
+          freshness:
+            warn_after: {count: 26, period: hour}
+            error_after: {count: 50, period: hour}
+      - name: order_items
+        description: One row per order line, partitioned by order_date.
+      - name: returns
+        description: At most one return per order line, partitioned by return_date.
+      - name: inventory_snapshots
+        description: Weekly (Sunday) on-hand stock per store and active product.

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "charts": {
+    "exec-aov": "2026-10-07T10:30:26.090Z",
+    "exec-gross-margin-pct": "2026-10-07T10:30:26.090Z",
+    "exec-net-sales-by-category": "2026-10-07T10:30:26.090Z",
+    "exec-orders": "2026-10-07T10:30:26.090Z",
+    "exec-net-sales-by-channel-month": "2026-10-07T10:30:26.090Z",
+    "exec-net-sales-weekly-yoy": "2026-10-07T10:30:26.090Z",
+    "exec-net-sales": "2026-10-07T10:30:26.090Z",
+    "exec-return-rate": "2026-10-07T10:30:26.090Z",
+    "exec-top-stores": "2026-10-07T10:30:26.090Z"
+  },
+  "dashboards": {
+    "exec-overview": "2026-10-07T10:30:25.569Z"
+  }
+}

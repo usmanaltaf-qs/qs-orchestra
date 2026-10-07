@@ -1,0 +1,50 @@
+chartConfig:
+  config:
+    comparisonFormat: raw
+    comparisonLabel: vs previous month
+    flipColors: false
+    label: Gross margin %
+    selectedField: rpt_daily_sales_gross_margin_pct
+    showBigNumberLabel: true
+    showComparison: true
+  type: big_number
+contentType: chart
+description: Gross margin %, last full month vs the month before.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - rpt_daily_sales_date_day_month
+  exploreName: rpt_daily_sales
+  filters:
+    dimensions:
+      and:
+        - id: f4ed7c81-380f-4f90-96e3-fb02c677c0f0
+          operator: inThePast
+          settings:
+            completed: true
+            unitOfTime: months
+          target:
+            fieldId: rpt_daily_sales_date_day_day
+          values:
+            - 2
+      id: 2677d4b1-fb1c-4e21-a6ac-472d952ad2fd
+  limit: 2
+  metricOverrides: {}
+  metrics:
+    - rpt_daily_sales_gross_margin_pct
+  sorts:
+    - descending: true
+      fieldId: rpt_daily_sales_date_day_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Exec - Gross margin %
+slug: exec-gross-margin-pct
+spaceSlug: exec-overview
+tableConfig:
+  columnOrder:
+    - rpt_daily_sales_date_day_month
+    - rpt_daily_sales_gross_margin_pct
+tableName: rpt_daily_sales
+verification: null
+version: 1

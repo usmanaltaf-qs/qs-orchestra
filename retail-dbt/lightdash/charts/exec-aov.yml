@@ -1,0 +1,50 @@
+chartConfig:
+  config:
+    comparisonFormat: percentage
+    comparisonLabel: vs previous month
+    flipColors: false
+    label: AOV
+    selectedField: fct_orders_aov
+    showBigNumberLabel: true
+    showComparison: true
+  type: big_number
+contentType: chart
+description: AOV, last full month vs the month before.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_orders_order_date_month
+  exploreName: fct_orders
+  filters:
+    dimensions:
+      and:
+        - id: a247a2e8-3307-4c06-9874-1354efcc325c
+          operator: inThePast
+          settings:
+            completed: true
+            unitOfTime: months
+          target:
+            fieldId: fct_orders_order_date_day
+          values:
+            - 2
+      id: cb4bc043-71ac-4448-9688-9df1343431fa
+  limit: 2
+  metricOverrides: {}
+  metrics:
+    - fct_orders_aov
+  sorts:
+    - descending: true
+      fieldId: fct_orders_order_date_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Exec - AOV
+slug: exec-aov
+spaceSlug: exec-overview
+tableConfig:
+  columnOrder:
+    - fct_orders_order_date_month
+    - fct_orders_aov
+tableName: fct_orders
+verification: null
+version: 1

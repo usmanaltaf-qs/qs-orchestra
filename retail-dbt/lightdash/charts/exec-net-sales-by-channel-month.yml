@@ -1,0 +1,73 @@
+chartConfig:
+  config:
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: rpt_daily_sales_date_day_month
+            yRef:
+              field: rpt_daily_sales_total_net_sales
+              pivotValues:
+                - field: rpt_daily_sales_channel
+                  value: store
+          stack: rpt_daily_sales_total_net_sales
+          type: bar
+        - encode:
+            xRef:
+              field: rpt_daily_sales_date_day_month
+            yRef:
+              field: rpt_daily_sales_total_net_sales
+              pivotValues:
+                - field: rpt_daily_sales_channel
+                  value: online
+          stack: rpt_daily_sales_total_net_sales
+          type: bar
+      yAxis:
+        - name: Net sales
+    layout:
+      stack: true
+      xField: rpt_daily_sales_date_day_month
+      yField:
+        - rpt_daily_sales_total_net_sales
+  type: cartesian
+contentType: chart
+description: Monthly net sales, stacked by store vs online.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - rpt_daily_sales_date_day_month
+    - rpt_daily_sales_channel
+  exploreName: rpt_daily_sales
+  filters:
+    dimensions:
+      and:
+        - id: 44277688-c5cc-4bbb-9834-8f11303c6363
+          operator: notNull
+          target:
+            fieldId: rpt_daily_sales_channel
+          values: []
+      id: 1f5b4dc4-e111-4b01-8976-6c72227b79fc
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - rpt_daily_sales_total_net_sales
+  sorts:
+    - descending: false
+      fieldId: rpt_daily_sales_date_day_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Exec - Net sales by channel by month
+pivotConfig:
+  columns:
+    - rpt_daily_sales_channel
+slug: exec-net-sales-by-channel-month
+spaceSlug: exec-overview
+tableConfig:
+  columnOrder:
+    - rpt_daily_sales_date_day_month
+    - rpt_daily_sales_channel
+    - rpt_daily_sales_total_net_sales
+tableName: rpt_daily_sales
+verification: null
+version: 1

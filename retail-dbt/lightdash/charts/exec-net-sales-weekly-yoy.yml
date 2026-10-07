@@ -1,0 +1,64 @@
+chartConfig:
+  config:
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: dim_date_iso_week
+            yRef:
+              field: rpt_daily_sales_total_net_sales
+              pivotValues:
+                - field: dim_date_iso_year
+                  value: 2025
+          type: line
+        - encode:
+            xRef:
+              field: dim_date_iso_week
+            yRef:
+              field: rpt_daily_sales_total_net_sales
+              pivotValues:
+                - field: dim_date_iso_year
+                  value: 2026
+          type: line
+      xAxis:
+        - name: Week of year
+      yAxis:
+        - name: Net sales
+    layout:
+      xField: dim_date_iso_week
+      yField:
+        - rpt_daily_sales_total_net_sales
+  type: cartesian
+contentType: chart
+description: Weekly net sales by ISO week, one line per ISO year.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - dim_date_iso_week
+    - dim_date_iso_year
+  exploreName: rpt_daily_sales
+  filters: {}
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - rpt_daily_sales_total_net_sales
+  sorts:
+    - descending: false
+      fieldId: dim_date_iso_week
+  tableCalculations: []
+  timezone: project_timezone
+name: Exec - Net sales by week, this year vs last year
+pivotConfig:
+  columns:
+    - dim_date_iso_year
+slug: exec-net-sales-weekly-yoy
+spaceSlug: exec-overview
+tableConfig:
+  columnOrder:
+    - dim_date_iso_week
+    - dim_date_iso_year
+    - rpt_daily_sales_total_net_sales
+tableName: rpt_daily_sales
+verification: null
+version: 1

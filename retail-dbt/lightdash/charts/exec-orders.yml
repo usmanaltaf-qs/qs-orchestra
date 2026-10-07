@@ -1,0 +1,50 @@
+chartConfig:
+  config:
+    comparisonFormat: percentage
+    comparisonLabel: vs previous month
+    flipColors: false
+    label: Orders
+    selectedField: fct_orders_orders
+    showBigNumberLabel: true
+    showComparison: true
+  type: big_number
+contentType: chart
+description: Orders, last full month vs the month before.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - fct_orders_order_date_month
+  exploreName: fct_orders
+  filters:
+    dimensions:
+      and:
+        - id: 27b3fc94-a26d-4da2-85fb-d5b863cd82dc
+          operator: inThePast
+          settings:
+            completed: true
+            unitOfTime: months
+          target:
+            fieldId: fct_orders_order_date_day
+          values:
+            - 2
+      id: 4eb42d0d-9c00-49af-a349-ac9df86490d6
+  limit: 2
+  metricOverrides: {}
+  metrics:
+    - fct_orders_orders
+  sorts:
+    - descending: true
+      fieldId: fct_orders_order_date_month
+  tableCalculations: []
+  timezone: project_timezone
+name: Exec - Orders
+slug: exec-orders
+spaceSlug: exec-overview
+tableConfig:
+  columnOrder:
+    - fct_orders_order_date_month
+    - fct_orders_orders
+tableName: fct_orders
+verification: null
+version: 1

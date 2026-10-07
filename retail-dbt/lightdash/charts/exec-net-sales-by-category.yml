@@ -1,0 +1,52 @@
+chartConfig:
+  config:
+    eChartsConfig:
+      series:
+        - encode:
+            xRef:
+              field: rpt_daily_sales_category
+            yRef:
+              field: rpt_daily_sales_total_net_sales
+          type: bar
+    layout:
+      flipAxes: true
+      xField: rpt_daily_sales_category
+      yField:
+        - rpt_daily_sales_total_net_sales
+  type: cartesian
+contentType: chart
+description: Net sales by product category, largest first.
+metricQuery:
+  additionalMetrics: []
+  customDimensions: []
+  dimensions:
+    - rpt_daily_sales_category
+  exploreName: rpt_daily_sales
+  filters:
+    dimensions:
+      and:
+        - id: e16bdc64-ee48-465e-b2b4-e14b15d5ba13
+          operator: notNull
+          target:
+            fieldId: rpt_daily_sales_category
+          values: []
+      id: 9a818410-ab7f-4ea8-bf70-cefd0c776618
+  limit: 500
+  metricOverrides: {}
+  metrics:
+    - rpt_daily_sales_total_net_sales
+  sorts:
+    - descending: true
+      fieldId: rpt_daily_sales_total_net_sales
+  tableCalculations: []
+  timezone: project_timezone
+name: Exec - Net sales by category
+slug: exec-net-sales-by-category
+spaceSlug: exec-overview
+tableConfig:
+  columnOrder:
+    - rpt_daily_sales_category
+    - rpt_daily_sales_total_net_sales
+tableName: rpt_daily_sales
+verification: null
+version: 1

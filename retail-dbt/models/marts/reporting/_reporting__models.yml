@@ -1,0 +1,170 @@
+version: 2
+
+models:
+  - name: rpt_daily_sales
+    description: >
+      Sales by order_date and refunds by return_date at date x store x category x channel,
+      for the Exec, Stores and Product dashboards. Refunds for orders placed before the data
+      starts have NULL store/category/channel. Has no order counts (they don't sum across
+      categories); use rpt_kpi_daily or fct_orders for those.
+    config:
+      meta:
+        label: Daily sales
+        joins:
+          - join: dim_stores
+            label: Store
+            sql_on: ${rpt_daily_sales.store_id} = ${dim_stores.store_id}
+            fields: [store_name, region, store_type]
+          - join: dim_date
+            label: Calendar
+            sql_on: ${rpt_daily_sales.date_day} = ${dim_date.date_day}
+            fields: [iso_year, iso_week, retail_season]
+        metrics:
+          total_net_sales:
+            label: Net sales
+            description: Net sales on completed orders, by order date.
+            type: sum
+            sql: ${TABLE}.net_sales
+            format: '[$£]#,##0'
+          total_cogs:
+            label: COGS
+            description: Cost of goods sold on completed orders.
+            type: sum
+            sql: ${TABLE}.cogs
+            format: '[$£]#,##0'
+          gross_margin:
+            label: Gross margin
+            description: Net sales - COGS.
+            type: number
+            sql: ${total_net_sales} - ${total_cogs}
+            format: '[$£]#,##0'
+          gross_margin_pct:
+            label: Gross margin %
+            description: Gross margin / net sales.
+            type: number
+            sql: (${total_net_sales} - ${total_cogs}) / NULLIF(${total_net_sales}, 0)
+            format: '0.0%'
+          total_refunds:
+            label: Refunds
+            description: Refunds by return date (not order date).
+            type: sum
+            sql: ${TABLE}.refunds
+            format: '[$£]#,##0'
+          return_rate:
+            label: Return rate
+            description: Refunds / net sales over the same period (value-based).
+            type: number
+            sql: ${total_refunds} / NULLIF(${total_net_sales}, 0)
+            format: '0.0%'
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [date_day, store_id, category, channel]
+    columns:
+      - name: date_day
+        description: Reporting date.
+        config:
+          meta:
+            dimension:
+              label: Date
+              type: date
+              time_intervals: [DAY, WEEK, MONTH, QUARTER, YEAR]
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: store_id
+        description: Store, 0 = Online; NULL only on unattributable refunds.
+        config:
+          meta:
+            dimension: {hidden: true}
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_stores')
+                field: store_id
+      - name: category
+        description: Product category; NULL only on unattributable refunds.
+        config:
+          meta:
+            dimension: {label: Category}
+      - name: channel
+        description: store or online; NULL only on unattributable refunds.
+        config:
+          meta:
+            dimension: {label: Channel}
+      - name: order_lines
+        description: Completed order lines.
+        config:
+          meta:
+            dimension: {hidden: true}
+      - name: net_sales
+        description: Net sales on completed orders, by order_date.
+        config:
+          meta:
+            dimension: {hidden: true}
+      - name: refunds
+        description: Refunds, by return_date.
+        config:
+          meta:
+            dimension: {hidden: true}
+      - name: net_sales_after_returns
+        description: net_sales - refunds on the reporting date.
+        config:
+          meta:
+            dimension: {hidden: true}
+
+  - name: rpt_customer_cohorts
+    description: Retention triangle by first-order month for the Customers dashboard.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [cohort_month, months_since_first_order]
+    columns:
+      - name: cohort_month
+        description: Month of first completed order.
+        data_tests: [not_null]
+      - name: months_since_first_order
+        description: 0 = the cohort month itself.
+        data_tests: [not_null]
+      - name: retention_rate
+        description: active_customers / cohort_size.
+
+  - name: rpt_inventory_health
+    description: Latest snapshot by store and category for the Inventory dashboard.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [store_id, category]
+    columns:
+      - name: store_id
+        description: Physical store.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_stores')
+                field: store_id
+      - name: stockout_rate
+        description: Share of tracked products with on_hand_qty = 0.
+      - name: low_cover_products
+        description: Products with under 2 weeks of cover.
+      - name: weeks_of_cover
+        description: units_on_hand / average weekly units sold; NULL when nothing sold.
+
+  - name: rpt_kpi_daily
+    description: >
+      Exec headline KPIs per day with WoW (vs 7 days earlier) and YoY (vs 364 days earlier,
+      same weekday) changes. YoY is NULL until the data covers more than a year.
+    columns:
+      - name: date_day
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: aov
+        description: net_sales / completed_orders.
+      - name: return_rate
+        description: refunds / net_sales on the same day (value-based).
+      - name: cancellation_rate
+        description: cancelled_orders / total_orders.

@@ -1,0 +1,161 @@
+version: 2
+
+models:
+  - name: stg_retail__customers
+    description: Customers, 1:1 with source. Emails lowercased (still nullable), city trimmed and title-cased.
+    columns:
+      - name: customer_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: email
+        description: Lowercased email; ~2% NULL in the source.
+      - name: city
+        description: Trimmed, title-cased city.
+      - name: loyalty_tier
+        description: none, bronze, silver or gold.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [none, bronze, silver, gold]
+
+  - name: stg_retail__products
+    description: Products, 1:1 with source. Prices as DECIMAL(12,2).
+    columns:
+      - name: product_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: sku
+        description: Natural key, SKU-000123.
+        data_tests: [unique, not_null]
+      - name: list_price
+        description: List price in GBP.
+        data_tests: [not_null]
+      - name: unit_cost
+        description: Unit cost in GBP.
+        data_tests: [not_null]
+
+  - name: stg_retail__stores
+    description: Physical stores, 1:1 with source.
+    columns:
+      - name: store_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: store_type
+        description: flagship, standard or outlet.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [flagship, standard, outlet]
+
+  - name: stg_retail__orders
+    description: Orders, 1:1 with source. store_id NULL for online, customer_id NULL for guests.
+    columns:
+      - name: order_id
+        description: Primary key, yyyymmdd * 1,000,000 + sequence.
+        data_tests: [unique, not_null]
+      - name: order_date
+        description: Order date (partition key).
+        data_tests: [not_null]
+      - name: channel
+        description: store or online.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [store, online]
+      - name: status
+        description: completed, cancelled or pending.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [completed, cancelled, pending]
+      - name: store_id
+        description: Store the order was placed in; NULL for online.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_retail__stores')
+                field: store_id
+      - name: customer_id
+        description: Customer; NULL for guests / no loyalty card.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_retail__customers')
+                field: customer_id
+
+  - name: stg_retail__order_items
+    description: Order lines, 1:1 with source.
+    columns:
+      - name: order_item_id
+        description: Primary key, order_id * 10 + line_number.
+        data_tests: [unique, not_null]
+      - name: order_id
+        description: Parent order.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_retail__orders')
+                field: order_id
+      - name: product_id
+        description: Product sold.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_retail__products')
+                field: product_id
+      - name: line_total
+        description: round(quantity * unit_price * (1 - discount_pct), 2).
+        data_tests: [not_null]
+
+  - name: stg_retail__returns
+    description: >
+      Returns, 1:1 with source. Returns in the first 30 days of data can reference orders from
+      before the data starts, so the FK to order lines is a singular test that allows for that.
+    columns:
+      - name: return_id
+        description: Primary key (equal to order_item_id; one return per line max).
+        data_tests: [unique, not_null]
+      - name: order_item_id
+        description: Returned order line.
+        data_tests: [unique, not_null]
+      - name: return_date
+        description: Return date (partition key). Refunds are reported on this date.
+        data_tests: [not_null]
+      - name: reason
+        description: Return reason; late delivery is online only.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [wrong size, damaged, not as described, changed mind, late delivery]
+      - name: refund_amount
+        description: Refunded amount in GBP (full line or 50% partial).
+        data_tests: [not_null]
+
+  - name: stg_retail__inventory_snapshots
+    description: Weekly stock snapshot per store and active product.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [snapshot_date, store_id, product_id]
+    columns:
+      - name: snapshot_date
+        description: Snapshot date (Sunday by default).
+        data_tests: [not_null]
+      - name: store_id
+        description: Physical store.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_retail__stores')
+                field: store_id
+      - name: product_id
+        description: Product.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_retail__products')
+                field: product_id
