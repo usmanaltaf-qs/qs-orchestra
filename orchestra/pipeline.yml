@@ -31,7 +31,7 @@ pipeline:
           build_command: pip install -r requirements.txt
           project_dir: retail-data-generator
           shallow_clone_dirs: retail-data-generator
-          environment_variables: '{"HOME": "/tmp", "RETAIL_OUTPUT": "gs://qs_orchestra/retail/prod", "RETAIL_SEED": "42"}'
+          environment_variables: '{"HOME": "/tmp", "RETAIL_OUTPUT": "gs://qs_orchestra/dev", "RETAIL_SEED": "42"}'
   validate:
     name: Validate retail data
     depends_on: [generate]
@@ -49,7 +49,7 @@ pipeline:
           build_command: pip install -r requirements.txt
           project_dir: retail-data-generator
           shallow_clone_dirs: retail-data-generator
-          environment_variables: '{"HOME": "/tmp", "RETAIL_OUTPUT": "gs://qs_orchestra/retail/prod"}'
+          environment_variables: '{"HOME": "/tmp", "RETAIL_OUTPUT": "gs://qs_orchestra/dev"}'
   dbt_build:
     name: dbt build
     depends_on: [validate]
