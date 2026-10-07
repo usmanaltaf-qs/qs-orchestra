@@ -1,0 +1,75 @@
+# PR checks: Orchestra pipeline YAML validation, and a fully local dbt build on DuckDB.
+# No cloud credentials needed. Lightdash preview and deploy.yml come later.
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      orchestra: ${{ steps.filter.outputs.orchestra }}
+      dbt: ${{ steps.filter.outputs.dbt }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dorny/paths-filter@v4.0.3
+        id: filter
+        with:
+          filters: |
+            orchestra:
+              - 'orchestra/**'
+              - '.github/workflows/ci.yml'
+            dbt:
+              - 'retail-dbt/**'
+              - 'retail-data-generator/**'
+              - '.github/workflows/ci.yml'
+
+  orchestra:
+    needs: changes
+    if: needs.changes.outputs.orchestra == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install orchestra-cli
+      - run: orchestra pipeline validate orchestra/pipeline.yml
+
+  dbt:
+    needs: changes
+    if: needs.changes.outputs.dbt == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            retail-data-generator/requirements.txt
+            retail-dbt/requirements.txt
+      - name: Install generator and dbt
+        run: pip install -r retail-data-generator/requirements.txt -r retail-dbt/requirements.txt
+      - name: Generate sample data
+        run: python retail-data-generator/generate_retail.py --mode full --scale 0.05 --target parquet --output ./data
+      - name: Validate sample data
+        run: python retail-data-generator/validate_retail.py --target parquet --output ./data
+      - name: dbt build (local DuckDB)
+        working-directory: retail-dbt
+        env:
+          DBT_TARGET: dev
+          DBT_PROFILES_DIR: .
+          RETAIL_SOURCE_URI: ../data
+        run: |
+          dbt deps
+          dbt build --target dev

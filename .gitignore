@@ -50,5 +50,24 @@ Thumbs.db
 
 
 # Local generator output (see CLAUDE.md local loop)
-/data/
+data/
+
+# Secrets: env files and service-account keys never get committed
 .env
+.env.*
+*_key.json
+
+# DuckDB files (local dev warehouse, generator output)
+*.duckdb
+*.duckdb.wal
+
+# dbt artefacts
+retail-dbt/target/
+retail-dbt/logs/
+retail-dbt/dbt_packages/
+logs/
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/

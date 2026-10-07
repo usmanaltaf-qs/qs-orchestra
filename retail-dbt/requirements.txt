@@ -1,2 +1,5 @@
-dbt-core>=1.8,<2
-dbt-duckdb>=1.8,<2
+# Pinned: Orchestra installs from this file. Keep dbt-core on a stable release.
+# duckdb matches the version dbt-duckdb[md] pins for MotherDuck.
+dbt-core==1.11.15
+dbt-duckdb==1.11.0
+duckdb==1.5.5

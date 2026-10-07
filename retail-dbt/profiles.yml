@@ -10,11 +10,13 @@ retail:
       threads: 4
     prod:
       type: duckdb
-      # Lightdash only reads the token from the profile (query parameter or settings, and
-      # settings fails in dbt-duckdb). `dbt debug` prints the path, so don't share its output.
-      path: "md:retail_analytics?motherduck_token={{ env_var('MOTHERDUCK_TOKEN', '') }}"
+      # No token here: MotherDuck reads MOTHERDUCK_TOKEN from the environment.
+      path: "md:retail_analytics"
       schema: main
       threads: 4
+      # Orchestra runners have no $HOME; DuckDB needs one for extensions and secrets.
+      config_options:
+        home_directory: /tmp
       extensions: [httpfs]
       secrets:
         - type: gcs
