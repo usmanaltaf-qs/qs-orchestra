@@ -5,7 +5,8 @@ retail:
   outputs:
     dev:
       type: duckdb
-      path: dev.duckdb
+      # Overridable so the AP matching eval can build into its own file
+      path: "{{ env_var('DBT_DUCKDB_PATH', 'dev.duckdb') }}"
       schema: main
       threads: 4
     prod:

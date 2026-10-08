@@ -48,7 +48,16 @@ python invoice-pipeline/generate_invoices.py --mode full --run-date 2026-10-07 -
 python -m pytest invoice-pipeline/tests -q
 ANTHROPIC_MODEL=claude-opus-5-5 python invoice-pipeline/extract_invoices.py --input ./data/invoices/dev
 python invoice-pipeline/evaluate.py --input ./data/invoices/dev [--show-values]
-cd retail-dbt && RETAIL_SOURCE_URI=../data dbt build --select tag:ap+ --target dev && cd ..
+cd retail-dbt && RETAIL_SOURCE_URI=../data dbt build --select +tag:ap --indirect-selection cautious --target dev && cd ..
 python invoice-pipeline/explain_exceptions.py --dry-run
 ```
+Evals (eval sets regenerate from `evals/invoices/eval_set.yml` into `./data/evals/`, never dev/prod):
+```
+python evals/run_evals.py --suite invoices-matching --subset full          # rules on ground truth, free
+python evals/run_evals.py --suite invoices --subset pr --repeats 1         # extraction, ~$1 (40 invoices)
+python evals/run_evals.py --suite invoices --subset full --repeats 3       # nightly-sized, ~$18
+python evals/run_evals.py --suite invoices-matching --subset full --extracted evals/results/<run>/<model>/rep1
+```
+`dev`'s ground-truth dbt test (`assert_ap_matches_ground_truth`) assumes extraction was right; a
+failure after a real extraction may be an extraction error, so check the extraction eval first.
 Adjust flags to match the CLI as built. Keep this section in sync if they change.

@@ -1,0 +1,44 @@
+version: 2
+
+# Invoice pipeline output, read in place. INVOICES_SOURCE_URI is the invoices env root
+# (../data/invoices/dev locally, gs://<bucket>/invoices/<env> in prod) holding system/ and
+# extracted/. INVOICES_EXTRACTED_URI overrides where extracted/ is read from (the matching eval
+# points it at ground-truth "perfect extraction" files).
+sources:
+  - name: ap
+    description: ERP system data from generate_invoices.py and Claude extractions from extract_invoices.py.
+    tables:
+      - name: suppliers
+        description: Supplier master data. One unpartitioned file, rewritten every run.
+        meta:
+          external_location: "read_parquet('{{ env_var('INVOICES_SOURCE_URI', '../data/invoices/dev') }}/system/suppliers/*.parquet')"
+      - name: purchase_orders
+        description: PO headers, Hive-partitioned by load_date.
+        meta:
+          external_location: "read_parquet('{{ env_var('INVOICES_SOURCE_URI', '../data/invoices/dev') }}/system/purchase_orders/**/*.parquet', hive_partitioning = true, union_by_name = true)"
+      - name: po_lines
+        description: PO lines with the agreed unit cost.
+        meta:
+          external_location: "read_parquet('{{ env_var('INVOICES_SOURCE_URI', '../data/invoices/dev') }}/system/po_lines/**/*.parquet', hive_partitioning = true, union_by_name = true)"
+      - name: goods_receipts
+        description: Goods received notes (GRNs), one per PO delivery.
+        meta:
+          external_location: "read_parquet('{{ env_var('INVOICES_SOURCE_URI', '../data/invoices/dev') }}/system/goods_receipts/**/*.parquet', hive_partitioning = true, union_by_name = true)"
+      - name: grn_lines
+        description: Quantities received per PO line.
+        meta:
+          external_location: "read_parquet('{{ env_var('INVOICES_SOURCE_URI', '../data/invoices/dev') }}/system/grn_lines/**/*.parquet', hive_partitioning = true, union_by_name = true)"
+      - name: inbox_files
+        description: Every PDF path in the inbox, recorded the first time extract_invoices.py sees it.
+        meta:
+          external_location: "read_parquet('{{ env_var('INVOICES_EXTRACTED_URI', env_var('INVOICES_SOURCE_URI', '../data/invoices/dev')) }}/extracted/inbox_files/*.parquet', union_by_name = true)"
+      - name: extracted_invoices
+        description: >
+          One row per extraction (file x run). Append-only: a deliberate re-extract adds a row,
+          staging keeps the latest run per file.
+        meta:
+          external_location: "read_parquet('{{ env_var('INVOICES_EXTRACTED_URI', env_var('INVOICES_SOURCE_URI', '../data/invoices/dev')) }}/extracted/invoices/*.parquet', union_by_name = true)"
+      - name: extracted_invoice_lines
+        description: Line items per extraction (file_hash x run_id x line_no).
+        meta:
+          external_location: "read_parquet('{{ env_var('INVOICES_EXTRACTED_URI', env_var('INVOICES_SOURCE_URI', '../data/invoices/dev')) }}/extracted/invoice_lines/*.parquet', union_by_name = true)"

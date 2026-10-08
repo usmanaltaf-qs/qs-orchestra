@@ -9,12 +9,23 @@ test-paths: ["tests"]
 macro-paths: ["macros"]
 clean-targets: ["target", "dbt_packages"]
 
+data_tests:
+  retail:
+    ap:
+      +tags: ["ap"]
+
 vars:
   # dim_date spans these; wide enough for signups (3y before data) plus headroom
   date_spine_start: "2020-01-01"
   date_spine_end: "2028-01-01"
   # fct_order_lines reprocesses this many days of orders (and of returns) on incremental runs
   incremental_lookback_days: 3
+  # AP matching tolerances (models/ap). A unit price is a variance only if it's off by more
+  # than the percentage AND the absolute amount.
+  ap_price_tolerance_pct: 0.02
+  ap_price_tolerance_abs: 0.05
+  ap_amount_tolerance: 0.02          # arithmetic checks on the document itself, GBP
+  ap_description_similarity: 0.90    # jaro-winkler, for lines without a SKU
 
 models:
   retail:
@@ -24,3 +35,11 @@ models:
       +materialized: view
     marts:
       +materialized: table
+    ap:
+      +tags: ["ap"]
+      staging:
+        +materialized: view
+      intermediate:
+        +materialized: view
+      marts:
+        +materialized: table

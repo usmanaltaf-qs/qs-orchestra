@@ -1,0 +1,74 @@
+version: 2
+
+models:
+  - name: int_ap__invoices
+    description: One row per inbox file joined to the extraction of its content. Not-yet-extracted files are excluded.
+    columns:
+      - name: invoice_id
+        description: Primary key (md5 of file_path).
+        data_tests: [unique, not_null]
+      - name: file_hash
+        description: Content hash; shared by byte-identical files.
+        data_tests: [not_null]
+
+  - name: int_ap__invoice_supplier
+    description: Invoice to supplier master match. VAT number first, then normalised name. NULL supplier_id = unknown supplier.
+    columns:
+      - name: invoice_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: supplier_match_method
+        description: vat_number, name, or NULL when unmatched.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [vat_number, name]
+
+  - name: int_ap__invoice_lines_matched
+    description: >
+      Invoice lines matched to the printed PO's lines (SKU when present, else best description
+      match above var ap_description_similarity), with quantity received across GRNs and the
+      product category. PO columns are NULL for unmatched lines.
+    columns:
+      - name: invoice_line_id
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: po_match_method
+        description: sku or description; NULL when unmatched.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [sku, description]
+
+  - name: int_ap__invoice_checks
+    description: >
+      One row per invoice x check. passed is true/false, or NULL when the check doesn't apply
+      (line checks need a PO that belongs to the matched supplier). Thresholds are dbt vars.
+      expected/actual/detail are short strings for reviewers and for explain_exceptions.py.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [invoice_id, check_name]
+    columns:
+      - name: invoice_check_id
+        description: Primary key, invoice_id-check_name.
+        data_tests: [unique, not_null]
+      - name: invoice_id
+        description: Invoice.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('int_ap__invoices')
+                field: invoice_id
+      - name: check_name
+        description: Which rule.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [duplicate, unknown_supplier, missing_po, po_not_found, po_supplier_mismatch,
+                         price_variance, qty_over_received, unmatched_line, arithmetic, vat_rate,
+                         bank_details_changed, extraction]
+      - name: passed
+        description: true = check passed, false = failed, NULL = not applicable.

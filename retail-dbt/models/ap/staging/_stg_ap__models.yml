@@ -1,0 +1,119 @@
+version: 2
+
+models:
+  - name: stg_ap__suppliers
+    description: Supplier master data with normalised name, VAT number (no spaces, upper-case) and digits-only bank details.
+    columns:
+      - name: supplier_id
+        description: Primary key, SUP-nnn.
+        data_tests: [unique, not_null]
+      - name: supplier_name_norm
+        description: Lower-case, & as "and", punctuation and legal suffixes (Ltd, Co...) removed.
+        data_tests: [unique]
+      - name: vat_number
+        description: VAT number without spaces, e.g. GB743737262.
+        data_tests: [unique, not_null]
+
+  - name: stg_ap__purchase_orders
+    description: PO headers.
+    columns:
+      - name: po_number
+        description: Primary key, PO-yyyymmdd-nnnn.
+        data_tests: [unique, not_null]
+      - name: supplier_id
+        description: Supplier the PO was raised with.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_ap__suppliers')
+                field: supplier_id
+
+  - name: stg_ap__po_lines
+    description: PO lines with the agreed unit cost and VAT rate.
+    columns:
+      - name: po_line_id
+        description: Primary key, po_number-line_no.
+        data_tests: [unique, not_null]
+      - name: po_number
+        description: Parent PO.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_ap__purchase_orders')
+                field: po_number
+      - name: unit_cost
+        description: Agreed unit price, GBP.
+        data_tests: [not_null]
+
+  - name: stg_ap__goods_receipts
+    description: Goods received notes.
+    columns:
+      - name: grn_number
+        description: Primary key.
+        data_tests: [unique, not_null]
+      - name: po_number
+        description: PO the delivery was against.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_ap__purchase_orders')
+                field: po_number
+
+  - name: stg_ap__grn_lines
+    description: Quantity received per PO line per GRN.
+    columns:
+      - name: grn_line_id
+        description: Primary key, grn_number-line_no.
+        data_tests: [unique, not_null]
+      - name: qty_received
+        description: Units received.
+        data_tests: [not_null]
+
+  - name: stg_ap__inbox_files
+    description: >
+      Every PDF that has landed in the inbox, first sighting only. invoice_id comes from the
+      path, so a byte-identical re-send is its own invoice (and gets caught as a duplicate).
+    columns:
+      - name: invoice_id
+        description: Primary key, md5 of file_path.
+        data_tests: [unique, not_null]
+      - name: file_path
+        description: Path under the env root, inbox/YYYY/MM/DD/<file>.pdf.
+        data_tests: [unique, not_null]
+      - name: received_date
+        description: Inbox date, from the path.
+        data_tests: [not_null]
+
+  - name: stg_ap__extractions
+    description: >
+      Latest Claude extraction per distinct PDF content (file hash), values as printed (never
+      corrected). IDs normalised for matching (trimmed, no spaces, upper-case); bank details
+      digits only.
+    columns:
+      - name: file_hash
+        description: Primary key, the PDF's SHA-256.
+        data_tests: [unique, not_null]
+      - name: extraction_status
+        description: ok, needs_review (required fields missing) or failed.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [ok, needs_review, failed]
+      - name: prompt_version
+        description: Extraction prompt version that produced this row.
+        data_tests: [not_null]
+
+  - name: stg_ap__extraction_lines
+    description: Line items of the latest extraction per file hash, as printed.
+    columns:
+      - name: extraction_line_id
+        description: Primary key, file_hash-line_no.
+        data_tests: [unique, not_null]
+      - name: file_hash
+        description: Parent extraction.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_ap__extractions')
+                field: file_hash
