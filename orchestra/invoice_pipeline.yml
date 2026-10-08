@@ -5,7 +5,9 @@
 #                               MOTHERDUCK_TOKEN
 #   dbt connection (shared with retail): MOTHERDUCK_TOKEN, GCS_HMAC_KEY_ID, GCS_HMAC_SECRET
 # Every DuckDB task sets HOME=/tmp (Orchestra runners have no $HOME).
-# Each run is cheap when there's nothing new: extraction skips known file hashes, explanations are
+# Manual only: no schedule. Start it from the Orchestra UI or
+#   orchestra pipeline run -a invoice_processing
+# A rerun is cheap when there's nothing new: extraction skips known file hashes, explanations are
 # cached per (invoice, check_hash), and the demo generator writes the same files for a given day.
 version: v1
 name: invoice_processing
@@ -19,11 +21,6 @@ inputs:
   invoices_per_day:
     type: number
     default: 5         # keeps the demo at ~15p/day of extraction
-schedule:
-  # No GCS sensor in Orchestra, so poll: hourly in UK working hours on weekdays
-  - name: Hourly in working hours
-    cron: "0 8-18 ? * MON-FRI *"
-    timezone: Europe/London
 alerts:
   - name: invoice_pipeline_failed
     statuses: [FAILED]
