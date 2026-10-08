@@ -65,7 +65,8 @@ def load_env() -> None:
 def setup_logging(name: str) -> logging.Logger:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     # httpx logs full request URLs at INFO; keep it quiet
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    for noisy in ("httpx", "httpx2"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     return logging.getLogger(name)
 
 
@@ -75,3 +76,18 @@ def file_hash(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def write_parquet(path: Path, schema: str, rows: list[dict], order_by: str = "1") -> None:
+    """Write rows (dicts keyed by column) to one Parquet file with an explicit DuckDB schema,
+    e.g. schema="po_number VARCHAR, qty INTEGER"."""
+    import duckdb
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    cols = [c.strip().split()[0] for c in schema.split(", ")]
+    con = duckdb.connect()
+    con.execute(f"CREATE TABLE t ({schema})")
+    if rows:
+        con.executemany(f"INSERT INTO t ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                        [[r.get(c) for c in cols] for r in rows])
+    con.execute(f"COPY (SELECT * FROM t ORDER BY {order_by}) TO '{path}' (FORMAT parquet)")

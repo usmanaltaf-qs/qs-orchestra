@@ -34,7 +34,7 @@ import pypdfium2 as pdfium
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 from reportlab.pdfgen import canvas
 
-from common import Rng, env_root, money, setup_logging
+from common import Rng, env_root, money, setup_logging, write_parquet
 from templates import TEMPLATES
 
 log = setup_logging("generate_invoices")
@@ -515,14 +515,7 @@ SYSTEM_SCHEMAS = {
 
 
 def write_table(path: Path, table: str, rows: list[dict]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect()
-    con.execute(f"CREATE TABLE t ({SYSTEM_SCHEMAS[table]})")
-    cols = [c.split()[0] for c in SYSTEM_SCHEMAS[table].split(", ")]
-    if rows:
-        con.executemany(f"INSERT INTO t ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
-                        [[r[c] for c in cols] for r in rows])
-    con.execute(f"COPY (SELECT * FROM t ORDER BY 1) TO '{path}' (FORMAT parquet)")
+    write_parquet(path, SYSTEM_SCHEMAS[table], rows)
 
 
 def env(name: str, default=None):

@@ -4,7 +4,7 @@ Agentic supplier-invoice workflow: **Claude reads, rules decide, humans resolve 
 
 ```
 generate_invoices.py ──► PDFs + POs/GRNs (GCS or ./data/invoices)
-extract_invoices.py  ──► Claude PDF → JSON (forced tool) ──► extracted Parquet
+extract_invoices.py  ──► Claude PDF → JSON (structured output) ──► extracted Parquet
 dbt (retail-dbt/models/ap/, tag ap) ──► three-way match ──► fct_invoice_status
 explain_exceptions.py ──► grounded explanation + suggested action per exception
 review.py            ──► human approve/reject → picked up by the next dbt run
@@ -39,11 +39,15 @@ the existing dbt Core connection with `--select tag:ap+`. Set `HOME=/tmp` (runne
 ## Local loop
 Own venv: `python3 -m venv invoice-pipeline/.venv && invoice-pipeline/.venv/bin/pip install -r invoice-pipeline/requirements.txt pytest`.
 `--run-date` defaults to today UTC; pin it to the last day of the retail data.
+The API key comes from `ANTHROPIC_API_KEY` (or `ANTHROPIC_KEY`) in `.env`. Current models reject forced
+`tool_choice`, so extraction uses structured output (`output_config.format`) instead of a forced tool.
+`--retry-failed` retries files that failed (e.g. rate limits); `--show-values` prints truth vs extracted
+for the worst invoices to the terminal only, never to the saved report.
 ```
 python invoice-pipeline/generate_invoices.py --mode full --run-date 2026-10-07 --days-back 5 --invoices-per-day 10 --output ./data
 python -m pytest invoice-pipeline/tests -q
-python invoice-pipeline/extract_invoices.py --input ./data/invoices/dev --output ./data/invoices/dev
-python invoice-pipeline/evaluate.py --input ./data/invoices/dev
+ANTHROPIC_MODEL=claude-opus-5-5 python invoice-pipeline/extract_invoices.py --input ./data/invoices/dev
+python invoice-pipeline/evaluate.py --input ./data/invoices/dev [--show-values]
 cd retail-dbt && RETAIL_SOURCE_URI=../data dbt build --select tag:ap+ --target dev && cd ..
 python invoice-pipeline/explain_exceptions.py --dry-run
 ```
