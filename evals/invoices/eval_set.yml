@@ -36,3 +36,22 @@ gates:
   critical_field_acc_digital: {floor: 0.98, tolerance: 0.01}
   critical_field_acc_scanned: {floor: 0.90, tolerance: 0.02}
   line_f1: {tolerance: 0.02}
+
+# Exception explanations (explain_exceptions.py). Expected suggested_action per injected problem;
+# with several problems the first in action_priority wins (same order the prompt asks for).
+explanations:
+  expected_actions:
+    duplicate: reject duplicate
+    unknown_supplier: fix master data
+    missing_po: query supplier
+    wrong_po: query supplier
+    extra_charge: query supplier
+    arithmetic_error: query supplier
+    price_variance: request credit note
+    qty_over_received: request credit note
+  action_priority: [duplicate, unknown_supplier, missing_po, wrong_po, extra_charge, arithmetic_error,
+                    price_variance, qty_over_received]
+  sample: 5                # explanations per eval run (one per exception type first); ~5p
+  gates:
+    suggested_action_acc: {floor: 0.9, tolerance: 0.05}
+    grounding_rate: {floor: 0.9, tolerance: 0.05}

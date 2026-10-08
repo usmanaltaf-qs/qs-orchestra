@@ -37,9 +37,6 @@ models:
       +materialized: table
     ap:
       +tags: ["ap"]
-      staging:
-        +materialized: view
-      intermediate:
-        +materialized: view
-      marts:
-        +materialized: table
+      # Tables, not views: explain_exceptions.py reads these outside dbt, and local views over
+      # relative ../data paths only resolve from this directory. The data is small.
+      +materialized: table

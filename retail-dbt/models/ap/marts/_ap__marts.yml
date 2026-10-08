@@ -29,6 +29,10 @@ models:
       - name: check_hash
         description: Hash of the failed checks and their values. Explanations are cached on (invoice_id, check_hash).
         data_tests: [not_null]
+      - name: explanation
+        description: Reviewer note for the current failed checks (NULL until explain_exceptions.py has run).
+      - name: suggested_action
+        description: Advice only. Never feeds status or final_status.
       - name: value_on_hold
         description: total_gross for unresolved exceptions and needs_review, else 0.
       - name: supplier_id

@@ -58,6 +58,10 @@ select
     f.check_hash,
     -- review decisions land in step 5; until then the final status is the system status
     st.status as final_status,
+    -- explanation for the current check results only (stale ones have a different check_hash)
+    e.summary as explanation,
+    e.suggested_action,
+    e.explanation_source,
     case when st.status in ('exception', 'needs_review') then i.total_gross else 0 end as value_on_hold,
     case when st.status in ('exception', 'needs_review')
          then date_diff('day', i.received_date, current_date) end as days_in_queue
@@ -66,3 +70,4 @@ inner join status as st on i.invoice_id = st.invoice_id
 inner join failed as f on i.invoice_id = f.invoice_id
 inner join {{ ref('int_ap__invoice_supplier') }} as s on i.invoice_id = s.invoice_id
 left join {{ ref('stg_ap__suppliers') }} as m on s.supplier_id = m.supplier_id
+left join {{ ref('stg_ap__explanations') }} as e on i.invoice_id = e.invoice_id and f.check_hash = e.check_hash

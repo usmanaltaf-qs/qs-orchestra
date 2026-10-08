@@ -117,3 +117,24 @@ models:
               arguments:
                 to: ref('stg_ap__extractions')
                 field: file_hash
+
+  - name: stg_ap__explanations
+    description: >
+      Reviewer notes from explain_exceptions.py, latest per (invoice, check_hash). Advice only:
+      suggested_action never changes a status. Empty until the first explain run.
+    columns:
+      - name: explanation_id
+        description: Primary key, invoice_id-check_hash.
+        data_tests: [unique, not_null]
+      - name: suggested_action
+        description: Advice for the reviewer.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [request credit note, approve with note, query supplier, reject duplicate, fix master data]
+      - name: explanation_source
+        description: llm (grounded) or fallback (templated from the check rows).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [llm, fallback]

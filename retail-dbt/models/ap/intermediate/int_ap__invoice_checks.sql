@@ -54,14 +54,14 @@ line_agg as (
             filter (where is_price_variance) as pv_actual,
         string_agg('line ' || invoice_line_no || ': received ' || cast(coalesce(qty_received, 0) as varchar), '; '
                    order by invoice_line_no) filter (where is_over_received) as or_expected,
-        string_agg('line ' || invoice_line_no || ': invoiced ' || cast(quantity as varchar), '; '
+        string_agg('line ' || invoice_line_no || ': invoiced ' || {{ ap_fmt_qty('quantity') }}, '; '
                    order by invoice_line_no) filter (where is_over_received) as or_actual,
         string_agg('line ' || invoice_line_no || ': ' || coalesce(description, '?') || ' '
                    || cast(line_net as varchar), '; ' order by invoice_line_no)
             filter (where po_line_id is null) as unmatched_actual,
         string_agg('line ' || invoice_line_no || ': ' || cast(vat_rate as varchar), '; ' order by invoice_line_no)
             filter (where is_wrong_vat_rate) as vat_actual,
-        string_agg('line ' || invoice_line_no || ': ' || cast(quantity as varchar) || ' x '
+        string_agg('line ' || invoice_line_no || ': ' || {{ ap_fmt_qty('quantity') }} || ' x '
                    || cast(unit_price as varchar) || ' = ' || cast(round(quantity * unit_price, 2) as varchar)
                    || ', printed ' || cast(line_net as varchar), '; ' order by invoice_line_no)
             filter (where is_line_arithmetic_error) as line_arith_detail

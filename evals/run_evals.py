@@ -6,6 +6,7 @@
   python evals/run_evals.py --suite invoices --subset full --update-baseline   # deliberate, commit with the change
   python evals/run_evals.py --suite invoices-matching --subset full             # rules only, free
   python evals/run_evals.py --suite invoices-matching --subset full --extracted evals/results/<run>/<model>/rep1
+  python evals/run_evals.py --suite invoices-explain --subset full --repeats 1  # 5 explanations, ~5p
 
 Exit 1 if a gating metric fails. Writes evals/results/<run_id>/summary.md (+ metrics.json) and prints it.
 Uses API tokens: every repeat re-extracts the whole subset.
@@ -85,19 +86,52 @@ def run_matching(args, run_dir: Path) -> tuple[str, bool]:
     return "\n".join(md) + "\n", not fails
 
 
+def run_explain(args, run_dir: Path) -> tuple[str, bool]:
+    from invoices import explain, suite
+
+    cfg = suite.load_config()
+    ecfg = cfg["explanations"]
+    eval_root = suite.generate(cfg, args.subset)
+    baseline_all = load_baseline("invoices-explain")
+    models = args.model or [os.environ.get("ANTHROPIC_MODEL") or sys.exit("pass --model or set ANTHROPIC_MODEL")]
+    md, ok, new_baseline, all_metrics = [f"# Eval: invoices-explain ({args.subset}, {args.repeats} repeat(s))", ""], \
+        True, dict(baseline_all), {}
+    for model in models:
+        reps, rows = [], None
+        for k in range(1, args.repeats + 1):
+            m, rows = explain.run(eval_root, run_dir / model / f"rep{k}", model, ecfg,
+                                  args.limit or ecfg.get("sample", 5))
+            reps.append(m)
+        agg = aggregate(reps)
+        key = f"{args.subset}/{model}"
+        fails = check_gates(agg, baseline_all.get(key), ecfg["gates"])
+        ok &= not fails
+        all_metrics[key] = {"repeats": reps, "aggregate": agg}
+        md += [f"## {model}", "", *metrics_table(agg, baseline_all.get(key), ecfg["gates"], list(reps[0])), "",
+               "**Gates:** " + ("all passed" if not fails else "; ".join(fails)), "",
+               f"### Repeat {args.repeats}", "", *explain.report(reps[-1], rows), ""]
+        new_baseline[key] = {m: v["mean"] for m, v in agg.items()}
+    if args.update_baseline:
+        md.append(f"Baseline updated: {save_baseline('invoices-explain', new_baseline)}")
+    (run_dir / "metrics.json").write_text(json.dumps(all_metrics, indent=2, default=str))
+    return "\n".join(md) + "\n", ok
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--suite", choices=["invoices", "invoices-matching"], required=True)
+    p.add_argument("--suite", choices=["invoices", "invoices-matching", "invoices-explain"], required=True)
     p.add_argument("--extracted", help="invoices-matching: score a real extraction folder end to end")
     p.add_argument("--subset", choices=["pr", "full"], default="pr")
     p.add_argument("--repeats", type=int, default=3)
     p.add_argument("--model", action="append", help="repeatable; default ANTHROPIC_MODEL")
     p.add_argument("--concurrency", type=int, default=3)
+    p.add_argument("--limit", type=int, default=0, help="invoices-explain: explanations per run (default from eval_set)")
     p.add_argument("--update-baseline", action="store_true")
     args = p.parse_args(argv)
     run_dir = RESULTS / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir.mkdir(parents=True, exist_ok=True)
-    md, ok = (run_matching if args.suite == "invoices-matching" else run_invoices)(args, run_dir)
+    runner = {"invoices": run_invoices, "invoices-matching": run_matching, "invoices-explain": run_explain}
+    md, ok = runner[args.suite](args, run_dir)
     (run_dir / "summary.md").write_text(md)
     print(md)
     sys.exit(0 if ok else 1)

@@ -49,14 +49,21 @@ python -m pytest invoice-pipeline/tests -q
 ANTHROPIC_MODEL=claude-opus-5-5 python invoice-pipeline/extract_invoices.py --input ./data/invoices/dev
 python invoice-pipeline/evaluate.py --input ./data/invoices/dev [--show-values]
 cd retail-dbt && RETAIL_SOURCE_URI=../data dbt build --select +tag:ap --indirect-selection cautious --target dev && cd ..
-python invoice-pipeline/explain_exceptions.py --dry-run
+python invoice-pipeline/explain_exceptions.py --dry-run          # what would be explained, no API calls
+ANTHROPIC_MODEL=claude-opus-5-5 python invoice-pipeline/explain_exceptions.py [--limit 5] [--print]
+cd retail-dbt && RETAIL_SOURCE_URI=../data dbt build --select +tag:ap --indirect-selection cautious --target dev && cd ..
 ```
+explain_exceptions.py reads the AP tables from `retail-dbt/dev.duckdb` (`--db`), writes
+`explanations/`, and the next dbt build joins them into `fct_invoice_status`. It explains each
+(invoice, check_hash) once; API-error fallbacks are retried next run. `--limit N` (one per
+exception type first) keeps local checks cheap; the pipeline runs without it.
 Evals (eval sets regenerate from `evals/invoices/eval_set.yml` into `./data/evals/`, never dev/prod):
 ```
 python evals/run_evals.py --suite invoices-matching --subset full          # rules on ground truth, free
 python evals/run_evals.py --suite invoices --subset pr --repeats 1         # extraction, ~$1 (40 invoices)
 python evals/run_evals.py --suite invoices --subset full --repeats 3       # nightly-sized, ~$18
 python evals/run_evals.py --suite invoices-matching --subset full --extracted evals/results/<run>/<model>/rep1
+python evals/run_evals.py --suite invoices-explain --subset full --repeats 1   # 5 explanations, ~5p
 ```
 `dev`'s ground-truth dbt test (`assert_ap_matches_ground_truth`) assumes extraction was right; a
 failure after a real extraction may be an extraction error, so check the extraction eval first.
