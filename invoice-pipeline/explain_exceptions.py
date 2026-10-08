@@ -28,8 +28,10 @@ from pathlib import Path
 import anthropic
 import duckdb
 
+import storage
 from common import REPO_ROOT, load_env, setup_logging, write_parquet
 from grounding import ungrounded
+from storage import join
 
 log = setup_logging("explain_exceptions")
 
@@ -195,7 +197,8 @@ def explain(client, model: str, effort: str, system: str, case: dict) -> dict:
 
 
 def read_cases(db: str) -> list[dict]:
-    con = duckdb.connect(db, read_only=True)
+    # MotherDuck (md:<database>, token from MOTHERDUCK_TOKEN) or a local DuckDB file
+    con = duckdb.connect(db) if db.startswith("md:") else duckdb.connect(db, read_only=True)
     try:
         return load_cases(con)
     finally:
@@ -215,13 +218,14 @@ def sample(cases: list[dict], n: int) -> list[dict]:
     return picked[:n]
 
 
-def existing(out_root: Path) -> set[tuple[str, str]]:
+def existing(out_root: str) -> set[tuple[str, str]]:
     """(invoice_id, check_hash) already explained. Fallbacks caused by API errors (e.g. rate
     limits) don't count, so the next run retries them."""
-    if not list((out_root / "explanations").glob("*.parquet")):
+    prefix = join(out_root, "explanations")
+    if not storage.list_files(prefix, ".parquet"):
         return set()
-    return set(duckdb.sql(f"""select invoice_id, check_hash from read_parquet('{out_root}/explanations/*.parquet')
-                              where coalesce(fallback_reason, '') not like 'error%'""").fetchall())
+    return set(storage.duck(prefix).sql(f"""select invoice_id, check_hash from read_parquet('{prefix}/*.parquet')
+                                           where coalesce(fallback_reason, '') not like 'error%'""").fetchall())
 
 
 def parse_args(argv=None):
@@ -246,7 +250,7 @@ def parse_args(argv=None):
 def main(argv=None) -> dict:
     args = parse_args(argv)
     load_env()
-    out_root = Path(args.output)
+    out_root = str(args.output)
     cases = read_cases(args.db)
     done = set() if args.reprocess else existing(out_root)
     todo = [c for c in cases if (c["invoice_id"], c["check_hash"]) not in done]
@@ -286,7 +290,7 @@ def main(argv=None) -> dict:
         if args.show:
             print(f"\n[{case['status']}: {','.join(case['failed'])}] -> {r['suggested_action']} ({r['source']})\n"
                   f"  {r['summary']}")
-    write_parquet(out_root / "explanations" / f"run={run_id}.parquet", OUT_COLS, rows, order_by="invoice_id")
+    write_parquet(join(out_root, "explanations", f"run={run_id}.parquet"), OUT_COLS, rows, order_by="invoice_id")
     summary = {"run_id": run_id, "explained": len(rows), "llm": sum(r["source"] == "llm" for r in rows),
                "fallback": sum(r["source"] == "fallback" for r in rows),
                "input_tokens": sum(r["input_tokens"] for r in rows),

@@ -32,7 +32,9 @@ from pathlib import Path
 import anthropic
 import duckdb
 
-from common import file_hash, load_env, money, setup_logging, write_parquet
+import storage
+from common import bytes_hash, load_env, money, setup_logging, write_parquet
+from storage import join, relative
 
 log = setup_logging("extract_invoices")
 
@@ -153,11 +155,11 @@ def quality_status(data: dict) -> tuple[str, str | None]:
     return ("needs_review", "; ".join(problems)) if problems else ("ok", None)
 
 
-def extract_one(client, model: str, effort: str, system: str, path: Path) -> dict:
+def extract_one(client, model: str, effort: str, system: str, pdf: bytes) -> dict:
     """Returns {'meta': ..., 'data': dict|None}. Retries once on an unusable response. The SDK
     retries 429/5xx/connection errors briefly; on top of that, rate limits back off for longer
     (they're about throughput, not this document) without using up the response retry."""
-    pdf_b64 = base64.standard_b64encode(path.read_bytes()).decode()
+    pdf_b64 = base64.standard_b64encode(pdf).decode()
     attempts, tokens_in, tokens_out, served_by = 0, 0, 0, model
     t0 = time.perf_counter()
     data, err = None, None
@@ -201,11 +203,11 @@ def extract_one(client, model: str, effort: str, system: str, path: Path) -> dic
     return {"meta": meta, "data": data}
 
 
-def safe_extract_one(client, model: str, effort: str, system: str, path: Path) -> dict:
+def safe_extract_one(client, model: str, effort: str, system: str, path: str, data: bytes | None) -> dict:
     """extract_one, but an unexpected per-file error (e.g. the file vanished) becomes a failed row
     instead of taking down the run. Logs the exception type only."""
     try:
-        return extract_one(client, model, effort, system, path)
+        return extract_one(client, model, effort, system, data if data is not None else storage.read_bytes(path))
     except Exception as e:  # noqa: BLE001
         return {"data": None, "meta": {"model": model, "input_tokens": 0, "output_tokens": 0, "latency_s": 0,
                                        "attempts": 0, "status": "failed", "error": f"error: {type(e).__name__}"}}
@@ -234,20 +236,25 @@ def to_rows(rel: str, fhash: str, run_id: str, at: datetime, prompt_version: str
     return inv, lines
 
 
-def read_manifest(path: Path) -> dict:
-    if not path.exists():
+def read_manifest(path: str) -> dict:
+    if not storage.exists(path):
         return {}
-    rows = duckdb.sql(f"SELECT * FROM read_parquet('{path}')").fetchall()
+    rows = storage.duck(path).sql(f"SELECT * FROM read_parquet('{path}')").fetchall()
     cols = [c.split()[0] for c in MANIFEST_COLS.split(", ")]
     return {(r[0], r[1]): dict(zip(cols, r)) for r in rows}
 
 
-def seen_paths(out_root: Path) -> set[str]:
-    files = list((out_root / "extracted" / "inbox_files").glob("*.parquet"))
-    if not files:
-        return set()
-    return {r[0] for r in duckdb.sql(
-        f"SELECT file_path FROM read_parquet('{out_root}/extracted/inbox_files/*.parquet')").fetchall()}
+def known_inbox(out_root: str) -> dict[str, str]:
+    """file_path -> file_hash for every inbox file recorded so far."""
+    prefix = join(out_root, "extracted", "inbox_files")
+    if not storage.list_files(prefix, ".parquet"):
+        return {}
+    return dict(storage.duck(prefix).sql(
+        f"SELECT file_path, file_hash FROM read_parquet('{prefix}/*.parquet')").fetchall())
+
+
+def seen_paths(out_root: str) -> set[str]:
+    return set(known_inbox(out_root))
 
 
 def parse_args(argv=None):
@@ -279,36 +286,40 @@ def main(argv=None) -> dict:
         raise SystemExit("ANTHROPIC_API_KEY is not set")
     system = load_prompt(args.prompt_version)
 
-    in_root, out_root = Path(args.input), Path(args.output)
-    manifest_path = out_root / "extracted" / "processed_files" / "manifest.parquet"
+    in_root, out_root = str(args.input), str(args.output)
+    manifest_path = join(out_root, "extracted", "processed_files", "manifest.parquet")
     manifest = read_manifest(manifest_path)
     done_hashes = {h for (h, _pv), m in manifest.items() if m["status"] != "failed"}
     failed = {h for (h, pv), m in manifest.items() if pv == args.prompt_version and m["status"] == "failed"}
 
     run_at = datetime.now(timezone.utc)
     run_id = run_at.strftime("%Y%m%dT%H%M%SZ")
-    known_paths = seen_paths(out_root)
+    known = known_inbox(out_root)
     new_inbox = []
     todo, skipped = [], 0
-    for path in sorted((in_root / "inbox").rglob("*.pdf")):
-        fhash = file_hash(path)
-        rel = str(path.relative_to(in_root))
-        if rel not in known_paths:
+    for path in storage.list_files(join(in_root, "inbox"), ".pdf"):
+        rel = relative(path, in_root)
+        data = None
+        if rel in known:              # hash already recorded: don't download it again
+            fhash = known[rel]
+        else:
+            data = storage.read_bytes(path)
+            fhash = bytes_hash(data)
             new_inbox.append({"file_path": rel, "file_hash": fhash, "run_id": run_id, "first_seen_at": run_at})
         if (fhash, args.prompt_version) in manifest and not (fhash in failed and args.retry_failed):
             skipped += 1                      # already done at this prompt version
         elif fhash in done_hashes and not args.reprocess:
             skipped += 1                      # done at another version; re-extract only on --reprocess
-        elif fhash in {h for _, h in todo}:
+        elif fhash in {t[2] for t in todo}:
             skipped += 1                      # byte-identical file twice in the inbox
         else:
-            todo.append((path, fhash))
+            todo.append((path, rel, fhash, data))
     if args.limit:
         todo = todo[:args.limit]
     log.info("files: %d new in inbox, %d to extract, %d skipped (prompt %s, model %s)", len(new_inbox),
              len(todo), skipped, args.prompt_version, model)
     if new_inbox:
-        write_parquet(out_root / "extracted" / "inbox_files" / f"run={run_id}.parquet", INBOX_COLS, new_inbox,
+        write_parquet(join(out_root, "extracted", "inbox_files", f"run={run_id}.parquet"), INBOX_COLS, new_inbox,
                       order_by="file_path")
     if not todo:
         return {"extracted": 0, "skipped": skipped, "new_inbox_files": len(new_inbox)}
@@ -322,19 +333,19 @@ def main(argv=None) -> dict:
         if chunk["inv"] == len(inv_rows):
             return
         k = chunk["n"]
-        write_parquet(out_root / "extracted" / "invoices" / f"run={run_id}-{k:03d}.parquet", INVOICE_COLS,
+        write_parquet(join(out_root, "extracted", "invoices", f"run={run_id}-{k:03d}.parquet"), INVOICE_COLS,
                       inv_rows[chunk["inv"]:], order_by="file_path")
-        write_parquet(out_root / "extracted" / "invoice_lines" / f"run={run_id}-{k:03d}.parquet", LINE_COLS,
+        write_parquet(join(out_root, "extracted", "invoice_lines", f"run={run_id}-{k:03d}.parquet"), LINE_COLS,
                       line_rows[chunk["lines"]:], order_by="file_hash, line_no")
         write_parquet(manifest_path, MANIFEST_COLS, list(manifest.values()), order_by="file_path, prompt_version")
         chunk.update(n=k + 1, inv=len(inv_rows), lines=len(line_rows))
 
     with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        futures = {pool.submit(safe_extract_one, client, model, args.effort, system, p): (p, h) for p, h in todo}
+        futures = {pool.submit(safe_extract_one, client, model, args.effort, system, path, data): (rel, fhash)
+                   for path, rel, fhash, data in todo}
         for fut in as_completed(futures):
-            path, fhash = futures[fut]
+            rel, fhash = futures[fut]
             res = fut.result()
-            rel = str(path.relative_to(in_root))
             inv, lines = to_rows(rel, fhash, run_id, run_at, args.prompt_version, res)
             inv_rows.append(inv)
             line_rows.extend(lines)

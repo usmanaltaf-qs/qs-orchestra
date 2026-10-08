@@ -42,10 +42,9 @@ class Rng:
         return items[-1][0]
 
 
-def env_root(output: str, env: str) -> Path:
-    if output.startswith("gs://"):
-        raise SystemExit("GCS output is not wired up yet: use a local --output path")
-    return Path(output) / "invoices" / env
+def env_root(output: str, env: str) -> str:
+    """{output}/invoices/{env}, as a string (local path or gs:// URI)."""
+    return f"{str(output).rstrip('/')}/invoices/{env}"
 
 
 def load_env() -> None:
@@ -70,6 +69,10 @@ def setup_logging(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
+def bytes_hash(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
 def file_hash(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -78,14 +81,16 @@ def file_hash(path: Path) -> str:
     return h.hexdigest()
 
 
-def write_parquet(path: Path, schema: str, rows: list[dict], order_by: str = "1") -> None:
-    """Write rows (dicts keyed by column) to one Parquet file with an explicit DuckDB schema,
-    e.g. schema="po_number VARCHAR, qty INTEGER"."""
-    import duckdb
+def write_parquet(path, schema: str, rows: list[dict], order_by: str = "1") -> None:
+    """Write rows (dicts keyed by column) to one Parquet file (local or gs://) with an explicit
+    DuckDB schema, e.g. schema="po_number VARCHAR, qty INTEGER"."""
+    from storage import duck, is_gcs
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path = str(path)
+    if not is_gcs(path):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
     cols = [c.strip().split()[0] for c in schema.split(", ")]
-    con = duckdb.connect()
+    con = duck(path)
     con.execute(f"CREATE TABLE t ({schema})")
     if rows:
         con.executemany(f"INSERT INTO t ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",

@@ -21,20 +21,18 @@ import json
 import os
 import random
 import re
-import shutil
-import tempfile
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from pathlib import Path
 
-import duckdb
 import pypdfium2 as pdfium
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 from reportlab.pdfgen import canvas
 
+import storage
 from common import Rng, env_root, money, setup_logging, write_parquet
+from storage import join
 from templates import TEMPLATES
 
 log = setup_logging("generate_invoices")
@@ -525,7 +523,7 @@ def stamp(img: Image.Image, received: date, rnd: random.Random, centre: tuple[in
 
 
 def load_dims(source: str):
-    con = duckdb.connect()
+    con = storage.duck(source)
     src = source.rstrip("/")
     products = con.execute(
         f"SELECT product_id, sku, product_name, category, brand, unit_cost FROM read_parquet('{src}/products/*.parquet') "
@@ -594,7 +592,7 @@ SYSTEM_SCHEMAS = {
 }
 
 
-def write_table(path: Path, table: str, rows: list[dict]) -> None:
+def write_table(path: str, table: str, rows: list[dict]) -> None:
     write_parquet(path, SYSTEM_SCHEMAS[table], rows)
 
 
@@ -610,7 +608,7 @@ def parse_args(argv=None):
                    help="last invoice day (full) or the one day to add (incremental). Default: today UTC")
     p.add_argument("--days-back", type=int, default=int(env("DAYS_BACK", 30)),
                    help="full mode: number of invoice days ending on --run-date")
-    p.add_argument("--invoices-per-day", type=int, default=int(env("INVOICES_PER_DAY", 20)))
+    p.add_argument("--invoices-per-day", type=int, default=int(float(env("INVOICES_PER_DAY", 20))))
     p.add_argument("--scanned-rate", type=float, default=float(env("SCANNED_RATE", 0.15)))
     p.add_argument("--hard-scan-rate", type=float, default=float(env("HARD_SCAN_RATE", 0.0)),
                    help="share of scanned invoices that are hard: degraded, stamp over a figure")
@@ -642,6 +640,9 @@ def parse_args(argv=None):
 
 
 def main(argv=None) -> dict:
+    if str(env("GENERATE", "true")).strip().lower() in {"false", "0", "no", "off"}:
+        log.info("INVOICES_GENERATE is false: not generating (real inbox)")
+        return {"skipped": True}
     args = parse_args(argv)
     run_date = date.fromisoformat(args.run_date) if args.run_date else datetime.now(timezone.utc).date()
     root = env_root(args.output, args.env)
@@ -652,7 +653,7 @@ def main(argv=None) -> dict:
         start = run_date - timedelta(days=args.days_back - 1)
         slots = gen.plan_window(start, run_date, args.min_per_problem)
         for sub in ("inbox", "system", "_truth"):
-            shutil.rmtree(root / sub, ignore_errors=True)
+            storage.delete_prefix(join(root, sub))
     else:
         start = run_date
         slots = [gen.plan(run_date, i) for i in range(args.invoices_per_day)]
@@ -680,16 +681,15 @@ def main(argv=None) -> dict:
                 hard += 1
             pdf = scan(pdf, slot.key, gen.rng, slot.day, hard=slot.hard_scan, stamp_over=target)
             scanned += 1
-        (root / rel).parent.mkdir(parents=True, exist_ok=True)
-        (root / rel).write_bytes(pdf)
+        storage.write_bytes(join(root, rel), pdf, "application/pdf")
 
         orig_stem = None
         if slot.duplicate_of:
             o = gen.plan(*slot.duplicate_of)
             orig_stem = stems.get(slot.duplicate_of) or gen.file_stem(o, core["invoice"])
         rec = truth_record(inv, slot, stem, rel, pages, core, orig_stem, stamp_over)
-        (root / "_truth").mkdir(parents=True, exist_ok=True)
-        (root / "_truth" / f"{stem}.json").write_text(json.dumps(rec, indent=2, default=to_json))
+        storage.write_bytes(join(root, "_truth", f"{stem}.json"),
+                            json.dumps(rec, indent=2, default=to_json).encode(), "application/json")
 
         if not slot.duplicate_of:
             day = system.setdefault(slot.day, {t: [] for t in SYSTEM_SCHEMAS if t != "suppliers"})
@@ -702,8 +702,8 @@ def main(argv=None) -> dict:
 
     for d, tables in system.items():
         for t, rows in tables.items():
-            write_table(root / "system" / t / f"load_date={d.isoformat()}" / "data.parquet", t, rows)
-    write_table(root / "system" / "suppliers" / "data.parquet", "suppliers", [
+            write_table(join(root, "system", t, f"load_date={d.isoformat()}", "data.parquet"), t, rows)
+    write_table(join(root, "system", "suppliers", "data.parquet"), "suppliers", [
         {"supplier_id": s["supplier_id"], "supplier_name": s["name"], "vat_number": s["vat"],
          "payment_terms_days": s["terms_days"], "template": s["template"], "bank_sort_code": s["sort_code"],
          "bank_account": s["account"], "address_line1": s["address"][0], "address_line2": s["address"][1]}

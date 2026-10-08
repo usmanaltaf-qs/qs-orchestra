@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import evaluate as ev  # noqa: E402
 import extract_invoices as ex  # noqa: E402
+from common import file_hash  # noqa: E402
 
 TRUTH = {
     "supplier_name": "Calder Valley Trading", "supplier_vat_number": "GB 743 7372 62",
@@ -68,7 +69,7 @@ def write_extraction(root: Path, truth: dict, data: dict | None, status="ok"):
     (root / rel).parent.mkdir(parents=True, exist_ok=True)
     (root / rel).write_bytes(b"%PDF fake " + truth["file_stem"].encode())
     truth = {**truth, "file": rel}
-    inv, lines = ex.to_rows(rel, ex.file_hash(root / rel), "r1", run_at, "v1", res)
+    inv, lines = ex.to_rows(rel, file_hash(root / rel), "r1", run_at, "v1", res)
     ex.write_parquet(root / "extracted/invoices/run=r1.parquet", ex.INVOICE_COLS, [inv])
     ex.write_parquet(root / "extracted/invoice_lines/run=r1.parquet", ex.LINE_COLS, lines)
     (root / "_truth").mkdir(parents=True, exist_ok=True)

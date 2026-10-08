@@ -43,9 +43,7 @@ def test_quality_status():
 def test_retries_once_on_bad_response(monkeypatch, tmp_path):
     calls = iter([resp("{oops"), resp(json.dumps(GOOD))])
     monkeypatch.setattr(ex, "call_claude", lambda *a: next(calls))
-    pdf = tmp_path / "a.pdf"
-    pdf.write_bytes(b"%PDF")
-    out = ex.extract_one(None, "m", "low", "sys", pdf)
+    out = ex.extract_one(None, "m", "low", "sys", b"%PDF")
     assert out["meta"]["status"] == "ok" and out["meta"]["attempts"] == 2
     assert out["meta"]["input_tokens"] == 20  # both attempts are billed and recorded
 
@@ -57,8 +55,8 @@ def inbox(tmp_path, monkeypatch):
     monkeypatch.setattr(ex, "load_prompt", lambda v: f"prompt {v}")
     calls = []
 
-    def fake(client, model, effort, system, path):
-        calls.append(path.name)
+    def fake(client, model, effort, system, pdf):
+        calls.append(pdf)
         return {"data": GOOD, "meta": {"model": model, "input_tokens": 1, "output_tokens": 1, "latency_s": 0,
                                        "attempts": 1, "status": "ok", "error": None}}
     monkeypatch.setattr(ex, "extract_one", fake)
@@ -93,10 +91,10 @@ def test_idempotent_by_hash(inbox):
 def test_per_file_errors_dont_lose_the_run(inbox, monkeypatch):
     root, calls = inbox
 
-    def flaky(client, model, effort, system, path):
-        if path.name == "inv1.pdf":
-            raise FileNotFoundError(path)
-        calls.append(path.name)
+    def flaky(client, model, effort, system, pdf):
+        if pdf == b"%PDF 1":
+            raise FileNotFoundError("gone")
+        calls.append(pdf)
         return {"data": GOOD, "meta": {"model": model, "input_tokens": 1, "output_tokens": 1, "latency_s": 0,
                                        "attempts": 1, "status": "ok", "error": None}}
     monkeypatch.setattr(ex, "extract_one", flaky)

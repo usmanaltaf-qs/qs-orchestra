@@ -33,9 +33,19 @@ No human review loop (decided 2026-10-08): status is the rules' output. `final_s
 
 ## Orchestra
 Separate pipeline from the daily retail one: `orchestra/invoice_pipeline.yml`
-(generate_invoices → extract → dbt_ap → explain), hourly in working hours.
-Python tasks use the `python-invoices` connection (Anthropic key, GCS keys). dbt reuses
-the existing dbt Core connection with `--select tag:ap+`. Set `HOME=/tmp` (runners have no home dir).
+(generate → extract → dbt_ap → explain → dbt_ap_refresh), hourly 08:00-18:00 on weekdays
+(Europe/London). Orchestra has no GCS sensor, so it polls; runs with nothing new are near-free.
+- Data: `gs://qs_orchestra/dev/invoices/dev/` (`--output gs://qs_orchestra/dev`, env `dev`).
+  Warehouse: MotherDuck `md:retail_analytics` (AP tables next to the retail ones).
+- Python tasks use the `python-invoices` connection: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`,
+  `GCS_HMAC_KEY_ID`, `GCS_HMAC_SECRET`, `MOTHERDUCK_TOKEN`. One credential type for GCS (HMAC):
+  boto3 for PDFs/JSON, DuckDB httpfs for Parquet (`storage.py`).
+- dbt reuses the retail dbt Core connection with `--select tag:ap` (needs `stg_retail__products`
+  from the retail build). A second, narrower dbt step after `explain` picks up new explanations.
+- Pipeline inputs: `generate` (false = real inbox, generator exits 0) and `invoices_per_day`
+  (5 by default, about 15p/day of extraction).
+- `HOME=/tmp` on every task (runners have no home dir). Task outputs need an Orchestra API key:
+  not set up yet.
 
 ## Local loop
 Own venv: `python3 -m venv invoice-pipeline/.venv && invoice-pipeline/.venv/bin/pip install -r invoice-pipeline/requirements.txt pytest`.
