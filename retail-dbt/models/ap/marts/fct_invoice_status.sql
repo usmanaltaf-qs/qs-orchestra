@@ -1,5 +1,5 @@
--- One row per invoice. Status comes only from the rule checks (and, once the review loop
--- exists, human decisions). Precedence: duplicate > needs_review > exception > auto_approved.
+-- One row per invoice. Status comes only from the rule checks.
+-- Precedence: duplicate > needs_review > exception > auto_approved.
 with invoices as (
     select * from {{ ref('int_ap__invoices') }}
 ),
@@ -56,7 +56,8 @@ select
     f.exception_types,
     f.failed_check_count,
     f.check_hash,
-    -- review decisions land in step 5; until then the final status is the system status
+    -- no human review step: final_status is the system status. Kept as its own column so a
+    -- review loop could override it later without changing downstream models.
     st.status as final_status,
     -- explanation for the current check results only (stale ones have a different check_hash)
     e.summary as explanation,

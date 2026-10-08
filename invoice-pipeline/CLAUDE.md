@@ -7,8 +7,9 @@ generate_invoices.py ──► PDFs + POs/GRNs (GCS or ./data/invoices)
 extract_invoices.py  ──► Claude PDF → JSON (structured output) ──► extracted Parquet
 dbt (retail-dbt/models/ap/, tag ap) ──► three-way match ──► fct_invoice_status
 explain_exceptions.py ──► grounded explanation + suggested action per exception
-review.py            ──► human approve/reject → picked up by the next dbt run
 ```
+No human review loop (decided 2026-10-08): status is the rules' output. `final_status` exists in
+`fct_invoice_status` so one could be added later without changing downstream models.
 
 ## Which skill to use
 - Anything in this folder, the AP dbt models, `orchestra/invoice_pipeline.yml` → `invoice-processing`
@@ -17,7 +18,7 @@ review.py            ──► human approve/reject → picked up by the next db
 - dbt conventions for `models/ap/` → `retail-dbt-analytics`
 
 ## Rules
-- The LLM never approves or changes a status. Status comes from dbt checks plus human decisions only.
+- The LLM never approves or changes a status. Status comes from the dbt checks only.
 - Idempotent by file hash. Re-running never re-extracts or double-loads a PDF. Re-extraction is
   deliberate: `--reprocess --prompt-version vN`.
 - Ground truth (`_truth/`) is only ever read by `evaluate.py` and the evals, never by extraction.

@@ -3,9 +3,9 @@ version: 2
 models:
   - name: fct_invoice_status
     description: >
-      One row per invoice: system status from the rule checks, final status (human decision
-      when one exists, from step 5 of the build; until then the system status), amounts and
-      queue age. The LLM never sets any of these.
+      One row per invoice: status from the rule checks, amounts, queue age and the reviewer
+      note. There's no human review step, so final_status equals status. The LLM never sets
+      either.
     columns:
       - name: invoice_id
         description: Primary key (md5 of the inbox file path).
@@ -18,12 +18,12 @@ models:
               arguments:
                 values: [auto_approved, exception, duplicate, needs_review]
       - name: final_status
-        description: Latest human decision (approved/rejected) if any, else status.
+        description: Same as status (no human review step). Separate so a review loop could override it.
         data_tests:
           - not_null
           - accepted_values:
               arguments:
-                values: [auto_approved, exception, duplicate, needs_review, approved, rejected]
+                values: [auto_approved, exception, duplicate, needs_review]
       - name: exception_types
         description: Comma-separated failed check names, NULL when none failed.
       - name: check_hash
@@ -34,7 +34,7 @@ models:
       - name: suggested_action
         description: Advice only. Never feeds status or final_status.
       - name: value_on_hold
-        description: total_gross for unresolved exceptions and needs_review, else 0.
+        description: total_gross for exceptions and needs_review, else 0.
       - name: supplier_id
         description: Matched supplier, NULL for unknown suppliers.
         data_tests:
