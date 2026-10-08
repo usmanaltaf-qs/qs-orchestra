@@ -59,7 +59,10 @@ def run_invoices(args, run_dir: Path) -> tuple[str, bool]:
         p = save_baseline("invoices", new_baseline)
         md.append(f"Baseline updated: {p}")
     (run_dir / "metrics.json").write_text(json.dumps(all_metrics, indent=2, default=str))
-    return "\n".join(md) + "\n", ok
+    headline = {f"{k}: {m}": v["aggregate"][m]["mean"] for k, v in all_metrics.items()
+                for m in ("critical_field_acc_digital", "critical_field_acc_scanned", "line_f1")
+                if m in v["aggregate"]}
+    return "\n".join(md) + "\n", ok, headline
 
 
 def run_matching(args, run_dir: Path) -> tuple[str, bool]:
@@ -83,7 +86,10 @@ def run_matching(args, run_dir: Path) -> tuple[str, bool]:
     md = [f"# Eval: invoices-matching ({args.subset})", "", *matching.report(m, title),
           "**Gates:** " + ("all passed" if not fails else "; ".join(fails)), ""]
     (run_dir / "metrics.json").write_text(json.dumps(m, indent=2, default=str))
-    return "\n".join(md) + "\n", not fails
+    headline = {"min precision": m["min_precision"], "min recall": m["min_recall"],
+                "problem invoices auto-approved": m["problem_invoices_auto_approved"],
+                "clean invoices held": m["clean_invoices_held"]}
+    return "\n".join(md) + "\n", not fails, headline
 
 
 def run_explain(args, run_dir: Path) -> tuple[str, bool]:
@@ -114,7 +120,26 @@ def run_explain(args, run_dir: Path) -> tuple[str, bool]:
     if args.update_baseline:
         md.append(f"Baseline updated: {save_baseline('invoices-explain', new_baseline)}")
     (run_dir / "metrics.json").write_text(json.dumps(all_metrics, indent=2, default=str))
-    return "\n".join(md) + "\n", ok
+    headline = {f"{k}: {m}": v["aggregate"][m]["mean"] for k, v in all_metrics.items()
+                for m in ("suggested_action_acc", "grounding_rate") if m in v["aggregate"]}
+    return "\n".join(md) + "\n", ok, headline
+
+
+def publish(uri: str, suite: str, run_dir: Path, ok: bool, headline: dict) -> None:
+    """Copy the run's summary and metrics to {uri}/runs/<run_id>/ and point {uri}/latest/<suite>.json
+    at it. run_summary.py shows latest/ in the pipeline email."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "invoice-pipeline"))
+    import storage
+    from common import load_env
+
+    load_env()
+    for name in ("summary.md", "metrics.json"):
+        storage.write_bytes(storage.join(uri, "runs", run_dir.name, suite, name), (run_dir / name).read_bytes())
+    latest = {"suite": suite, "run_id": run_dir.name, "passed": ok, "headline": headline,
+              "published_at": datetime.now(timezone.utc).isoformat()}
+    storage.write_bytes(storage.join(uri, "latest", f"{suite}.json"), json.dumps(latest, default=str).encode(),
+                        "application/json")
+    print(f"published to {uri}/runs/{run_dir.name}/{suite}/")
 
 
 def main(argv=None):
@@ -127,13 +152,17 @@ def main(argv=None):
     p.add_argument("--concurrency", type=int, default=3)
     p.add_argument("--limit", type=int, default=0, help="invoices-explain: explanations per run (default from eval_set)")
     p.add_argument("--update-baseline", action="store_true")
+    p.add_argument("--publish", nargs="?", const=os.environ.get("EVALS_URI", "gs://qs_orchestra/dev/evals"),
+                   help="also copy results to this URI (default $EVALS_URI or gs://qs_orchestra/dev/evals)")
     args = p.parse_args(argv)
     run_dir = RESULTS / datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_dir.mkdir(parents=True, exist_ok=True)
     runner = {"invoices": run_invoices, "invoices-matching": run_matching, "invoices-explain": run_explain}
-    md, ok = runner[args.suite](args, run_dir)
+    md, ok, headline = runner[args.suite](args, run_dir)
     (run_dir / "summary.md").write_text(md)
     print(md)
+    if args.publish:
+        publish(args.publish, args.suite, run_dir, ok, headline)
     sys.exit(0 if ok else 1)
 
 

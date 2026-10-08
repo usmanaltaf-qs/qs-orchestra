@@ -1,8 +1,9 @@
-# Invoice processing: generate (demo only) → extract → dbt_ap → explain → dbt_ap_refresh.
+# Invoice processing: generate (demo only) → extract → dbt_ap → explain → dbt_ap_refresh → summary.
 # Owned by the invoice-processing skill. Separate from the daily retail pipeline (different cadence).
 # Secrets live on the Orchestra connections, never here:
 #   python-invoices connection: ANTHROPIC_API_KEY, ANTHROPIC_MODEL, GCS_HMAC_KEY_ID, GCS_HMAC_SECRET,
-#                               MOTHERDUCK_TOKEN
+#                               MOTHERDUCK_TOKEN, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD,
+#                               EMAIL_FROM, EMAIL_TO
 #   dbt connection (shared with retail): MOTHERDUCK_TOKEN, GCS_HMAC_KEY_ID, GCS_HMAC_SECRET
 # Every DuckDB task sets HOME=/tmp (Orchestra runners have no $HOME).
 # Manual only: no schedule. Start it from the Orchestra UI or
@@ -22,8 +23,9 @@ inputs:
     type: number
     default: 5         # keeps the demo at ~15p/day of extraction
 alerts:
-  - name: invoice_pipeline_failed
-    statuses: [FAILED]
+  # Orchestra's own status emails (no numbers); the summary task sends the run report
+  - name: invoice_pipeline_status
+    statuses: [SUCCEEDED, FAILED]
     destinations:
       - integration: EMAIL
         destination: usman.altaf@quantspark.com
@@ -118,3 +120,22 @@ pipeline:
           project_dir: retail-dbt
           shallow_clone_dirs: retail-dbt
           environment_variables: '{"HOME": "/tmp", "INVOICES_SOURCE_URI": "gs://qs_orchestra/dev/invoices/dev"}'
+  summary:
+    name: Run summary email
+    depends_on: [dbt_ap_refresh]
+    tasks:
+      run_summary:
+        name: Email the run summary
+        integration: PYTHON
+        integration_job: PYTHON_EXECUTE_SCRIPT
+        connection: python_invoices_78057
+        parameters:
+          source: GIT
+          # non-blocking: if email isn't configured or sending fails, it logs that and exits 0
+          command: python run_summary.py --db md:retail_analytics
+          package_manager: PIP
+          python_version: "3.12"
+          build_command: pip install -r requirements.txt
+          project_dir: invoice-pipeline
+          shallow_clone_dirs: invoice-pipeline
+          environment_variables: '{"HOME": "/tmp", "INVOICES_OUTPUT": "gs://qs_orchestra/dev/invoices/dev", "EVALS_URI": "gs://qs_orchestra/dev/evals"}'
