@@ -1,4 +1,4 @@
-# The one Orchestra pipeline for the retail demo: generate → validate → dbt_build.
+# The one Orchestra pipeline for the retail demo: generate → validate → dbt_build → refresh_dashboards.
 # Groups are owned per skill (retail-data-generator: generate, validate;
 # retail-dbt-analytics: dbt_build; lightdash-dashboards: refresh_dashboards + alerts).
 # Secrets live on the Orchestra connections, never here. Every DuckDB task sets HOME=/tmp
@@ -68,3 +68,16 @@ pipeline:
           project_dir: retail-dbt
           shallow_clone_dirs: retail-dbt
           environment_variables: '{"HOME": "/tmp"}'
+  refresh_dashboards:
+    name: Refresh Lightdash dashboards
+    depends_on: [dbt_build]
+    tasks:
+      refresh_exec:
+        name: Refresh exec overview
+        integration: LIGHTDASH
+        integration_job: LIGHTDASH_REFRESH_DASHBOARD
+        connection: retail_dashboard_26307
+        parameters:
+          # Exec overview in the Retail project (not the preview project)
+          dashboard_id: "08c41504-c0f7-40b0-ace8-8e6ac18cdb52"
+          invalidate_cache: true
