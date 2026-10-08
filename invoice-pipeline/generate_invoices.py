@@ -56,6 +56,9 @@ COMBINABLE = ["price_variance", "qty_over_received", "missing_po", "wrong_po", "
 EXCLUSIVE_PAIRS = {frozenset({"missing_po", "wrong_po"})}
 DUPLICATE_LOOKBACK_DAYS = 5
 SCAN_DPI = 150
+HARD_SCAN_DPI = 110
+# Hard scans put the stamp over one of these figures (a line amount, or a total).
+STAMP_TARGETS = ["total_gross", "vat_total", "line_net"]
 
 BILL_TO = ["Harbourline Retail Ltd", "Accounts Payable", "PO Box 4410", "Leeds LS1 9XX"]
 
@@ -99,6 +102,8 @@ class Slot:
     supplier: dict
     problems: list = field(default_factory=list)
     scanned: bool = False
+    hard_scan: bool = False             # degraded scan with the stamp over a figure
+    template: str | None = None         # set when templates are balanced
     duplicate_of: tuple | None = None   # (day, idx) of the re-sent invoice
     wrong_po_from: tuple | None = None  # (day, idx) whose PO number gets printed
 
@@ -108,11 +113,15 @@ class Slot:
 
 
 class Generator:
-    def __init__(self, seed: int, source: str, invoices_per_day: int, scanned_rate: float):
+    def __init__(self, seed: int, source: str, invoices_per_day: int, scanned_rate: float,
+                 hard_scan_rate: float = 0.0, problem_rates: dict | None = None, balance_templates: bool = False):
         self.rng = Rng(seed)
         self.seed = seed
         self.per_day = invoices_per_day
         self.scanned_rate = scanned_rate
+        self.hard_scan_rate = hard_scan_rate
+        self.problem_rates = problem_rates or PROBLEM_RATES
+        self.balance_templates = balance_templates
         self.products, self.stores = load_dims(source)
         self.suppliers = self._build_suppliers()
         self.plans: dict[tuple, Slot] = {}
@@ -151,17 +160,23 @@ class Generator:
     def unknown_party(self, slot: Slot) -> tuple[dict, str]:
         name, template = self.rng.choice(slot.key, "unknown", UNKNOWN_SUPPLIERS)
         party = self._party(f"unknown|{name}", name)
-        return {**party, "supplier_id": None, "terms_days": 30, "fmt": "INV"}, template
+        return {**party, "supplier_id": None, "terms_days": 30, "fmt": "INV"}, slot.template or template
 
     # ------------------------------------------------------------------ planning
 
     def base_slot(self, d: date, i: int) -> Slot:
         key = f"{d.isoformat()}|{i}"
         r = self.rng
-        sup = r.weighted(key, "supplier", [(s, s["weight"]) for s in self.suppliers])
-        slot = Slot(d, i, sup, scanned=r.u(key, "scanned") < self.scanned_rate)
+        template = None
+        pool = self.suppliers
+        if self.balance_templates:  # rotate A-D through the slots so every template gets the same count
+            template = "ABCD"[(d.toordinal() * self.per_day + i) % 4]
+            pool = [s for s in self.suppliers if s["template"] == template] or self.suppliers
+        sup = r.weighted(key, "supplier", [(s, s["weight"]) for s in pool])
+        slot = Slot(d, i, sup, scanned=r.u(key, "scanned") < self.scanned_rate, template=template)
+        slot.hard_scan = slot.scanned and r.u(key, "hard_scan") < self.hard_scan_rate
         x = r.u(key, "problem")
-        for p, rate in PROBLEM_RATES.items():
+        for p, rate in self.problem_rates.items():
             if x < rate:
                 slot.problems = [p]
                 break
@@ -205,11 +220,12 @@ class Generator:
 
     def _dup_target(self, slot: Slot, window_start: date | None):
         cands = []
-        for back in range(DUPLICATE_LOOKBACK_DAYS + 1):
+        # a re-send arrives on a later day than the original, so arrival order is unambiguous
+        for back in range(1, DUPLICATE_LOOKBACK_DAYS + 1):
             d = slot.day - timedelta(days=back)
             if window_start and d < window_start:
                 break
-            for j in range(self.per_day if back else slot.idx):
+            for j in range(self.per_day):
                 other = self.plans.get((d, j)) or self.base_slot(d, j)
                 if not other.problems:  # re-send a clean invoice, so the duplicate is the only problem
                     cands.append((d, j))
@@ -227,7 +243,7 @@ class Generator:
             self._resolve(s, window_start=start)
         if min_per_problem:
             counts = Counter(p for s in slots for p in s.problems)
-            for p in PROBLEM_RATES:
+            for p in self.problem_rates:
                 need = min_per_problem - counts[p]
                 targets = {t for s in slots for t in (s.duplicate_of, s.wrong_po_from) if t}
                 clean = sorted((s for s in slots if not s.problems and (s.day, s.idx) not in targets),
@@ -399,8 +415,30 @@ def render_pdf(inv: dict) -> bytes:
     return buf.getvalue()
 
 
-def scan(pdf_bytes: bytes, seed_key: str, rng: Rng, received: date) -> bytes:
-    """Make a digital PDF look scanned: greyscale image, skew, blur, specks, maybe a stamp."""
+def find_text(doc, needle: str, last: bool):
+    """(page index, (left, top, right, bottom) in PDF points from the top-left) of `needle`."""
+    hits = []
+    for i in range(len(doc)):
+        page = doc[i]
+        tp = page.get_textpage()
+        searcher = tp.search(needle, match_case=True)
+        while (occ := searcher.get_next()) is not None:
+            start, count = occ
+            boxes = [tp.get_charbox(start + k) for k in range(count)]
+            h = page.get_height()
+            hits.append((i, (min(b[0] for b in boxes), h - max(b[3] for b in boxes),
+                             max(b[2] for b in boxes), h - min(b[1] for b in boxes))))
+    return (hits[-1] if last else hits[0]) if hits else None
+
+
+def scan(pdf_bytes: bytes, seed_key: str, rng: Rng, received: date, hard: bool = False,
+         stamp_over: tuple[str, str] | None = None) -> bytes:
+    """Make a digital PDF look scanned: greyscale image, skew, blur, specks, maybe a stamp.
+
+    hard: lower resolution, heavier blur/noise/compression, and the stamp placed over the printed
+    figure stamp_over = (field, text) instead of in a blank-ish header area."""
+    if hard:
+        return _hard_scan(pdf_bytes, seed_key, rng, received, stamp_over)
     rnd = random.Random(int(rng.u(seed_key, "scan") * 2**53))
     doc = pdfium.PdfDocument(pdf_bytes)
     pages = []
@@ -424,7 +462,39 @@ def scan(pdf_bytes: bytes, seed_key: str, rng: Rng, received: date) -> bytes:
     return out.getvalue()
 
 
-def stamp(img: Image.Image, received: date, rnd: random.Random) -> Image.Image:
+def _hard_scan(pdf_bytes: bytes, seed_key: str, rng: Rng, received: date, stamp_over) -> bytes:
+    rnd = random.Random(int(rng.u(seed_key, "scan.hard") * 2**53))
+    scale = HARD_SCAN_DPI / 72
+    doc = pdfium.PdfDocument(pdf_bytes)
+    hit = None
+    if stamp_over:
+        field, needle = stamp_over
+        hit = find_text(doc, needle, last=field != "line_net")
+    pages = []
+    for i in range(len(doc)):
+        img = doc[i].render(scale=scale).to_pil().convert("L")
+        w, h = img.size
+        if hit and hit[0] == i:
+            left, top, right, bottom = hit[1]
+            img = stamp(img, received, rnd, centre=(int((left + right) / 2 * scale), int((top + bottom) / 2 * scale)),
+                        size=HARD_SCAN_DPI / SCAN_DPI)
+        img = img.rotate(rnd.uniform(-2, 2), resample=Image.BICUBIC, fillcolor=255)
+        img = img.filter(ImageFilter.GaussianBlur(rnd.uniform(1.0, 1.4)))
+        noise = Image.frombytes("L", (w, h), rnd.randbytes(w * h))
+        img = ImageChops.darker(img, noise.point(lambda v: 70 if v < 6 else 255))
+        img = Image.blend(img, Image.new("L", (w, h), 225), 0.2)  # faded, low contrast
+        pages.append(img)
+    doc.close()
+    out = io.BytesIO()
+    stamp_time = datetime(received.year, received.month, received.day).timetuple()
+    pages[0].save(out, "PDF", save_all=True, append_images=pages[1:], resolution=HARD_SCAN_DPI, quality=35,
+                  creationDate=stamp_time, modDate=stamp_time)
+    return out.getvalue()
+
+
+def stamp(img: Image.Image, received: date, rnd: random.Random, centre: tuple[int, int] | None = None,
+          size: float = 1.0) -> Image.Image:
+    """Overlay a RECEIVED stamp. Without `centre` it lands somewhere in the upper part of the page."""
     w, h = img.size
     layer = Image.new("L", (520, 170), 0)
     dr = ImageDraw.Draw(layer)
@@ -436,9 +506,16 @@ def stamp(img: Image.Image, received: date, rnd: random.Random) -> Image.Image:
     dr.rectangle([4, 4, 515, 165], outline=255, width=6)
     dr.text((30, 18), "RECEIVED", fill=255, font=font)
     dr.text((30, 100), received.strftime("%d %b %Y").upper(), fill=255, font=small)
+    if size != 1.0:
+        layer = layer.resize((int(layer.width * size), int(layer.height * size)), Image.BICUBIC)
     layer = layer.rotate(rnd.uniform(-18, 18), expand=True, resample=Image.BICUBIC)
-    x = int(rnd.uniform(0.35, 0.65) * (w - layer.width))
-    y = int(rnd.uniform(0.05, 0.35) * (h - layer.height))
+    if centre:
+        # put a stamp stroke (the date text sits ~70% down the stamp) across the figure
+        x = centre[0] - int(layer.width * rnd.uniform(0.3, 0.6))
+        y = centre[1] - int(layer.height * rnd.uniform(0.55, 0.75))
+    else:
+        x = int(rnd.uniform(0.35, 0.65) * (w - layer.width))
+        y = int(rnd.uniform(0.05, 0.35) * (h - layer.height))
     mask = Image.new("L", img.size, 0)
     mask.paste(layer.point(lambda v: int(v * 0.7)), (x, y))
     return Image.composite(Image.new("L", img.size, 90), img, mask)
@@ -468,7 +545,8 @@ def to_json(v):
     raise TypeError(type(v))
 
 
-def truth_record(inv: dict, slot: Slot, stem: str, rel_path: str, pages: int, core: dict, orig_stem: str | None):
+def truth_record(inv: dict, slot: Slot, stem: str, rel_path: str, pages: int, core: dict, orig_stem: str | None,
+                 stamp_over: str | None = None):
     s = inv["supplier"]
     return {
         # what perfect extraction returns (the printed values)
@@ -494,6 +572,8 @@ def truth_record(inv: dict, slot: Slot, stem: str, rel_path: str, pages: int, co
         "file_stem": stem,
         "template": inv["template"],
         "scanned": slot.scanned,
+        "scan_profile": ("hard" if slot.hard_scan else "standard") if slot.scanned else None,
+        "stamp_over": stamp_over,
         "pages": pages,
         "slot": slot.key,
         "supplier_id": s.get("supplier_id"),
@@ -532,6 +612,12 @@ def parse_args(argv=None):
                    help="full mode: number of invoice days ending on --run-date")
     p.add_argument("--invoices-per-day", type=int, default=int(env("INVOICES_PER_DAY", 20)))
     p.add_argument("--scanned-rate", type=float, default=float(env("SCANNED_RATE", 0.15)))
+    p.add_argument("--hard-scan-rate", type=float, default=float(env("HARD_SCAN_RATE", 0.0)),
+                   help="share of scanned invoices that are hard: degraded, stamp over a figure")
+    p.add_argument("--problem-rates", default=env("PROBLEM_RATES", ""),
+                   help='JSON overriding PROBLEM_RATES, e.g. \'{"duplicate": 0.06}\'')
+    p.add_argument("--balance-templates", action="store_true",
+                   help="rotate templates A-D through the slots (eval sets) instead of by supplier weight")
     p.add_argument("--min-per-problem", type=int, default=int(env("MIN_PER_PROBLEM", 1)),
                    help="full mode: top up so each problem type appears at least this often")
     p.add_argument("--seed", type=int, default=int(env("SEED", 42)))
@@ -542,6 +628,16 @@ def parse_args(argv=None):
     args = p.parse_args(argv)
     if not 1 <= args.invoices_per_day < 100:
         p.error("--invoices-per-day must be 1..99 (PO numbers encode the slot index in two digits)")
+    rates = dict(PROBLEM_RATES)
+    if args.problem_rates:
+        override = json.loads(args.problem_rates)
+        unknown = set(override) - set(PROBLEM_RATES)
+        if unknown:
+            p.error(f"unknown problem types: {', '.join(sorted(unknown))}")
+        rates.update(override)
+    if sum(rates.values()) > 1:
+        p.error("problem rates sum to more than 1")
+    args.problem_rates = rates
     return args
 
 
@@ -549,7 +645,8 @@ def main(argv=None) -> dict:
     args = parse_args(argv)
     run_date = date.fromisoformat(args.run_date) if args.run_date else datetime.now(timezone.utc).date()
     root = env_root(args.output, args.env)
-    gen = Generator(args.seed, args.source, args.invoices_per_day, args.scanned_rate)
+    gen = Generator(args.seed, args.source, args.invoices_per_day, args.scanned_rate, args.hard_scan_rate,
+                    args.problem_rates, args.balance_templates)
 
     if args.mode == "full":
         start = run_date - timedelta(days=args.days_back - 1)
@@ -562,7 +659,7 @@ def main(argv=None) -> dict:
 
     stems: dict[tuple, str] = {}
     system: dict[date, dict[str, list]] = {}
-    counts, templates, scanned = Counter(), Counter(), 0
+    counts, templates, scanned, hard = Counter(), Counter(), 0, 0
     for slot in sorted(slots, key=lambda s: (s.day, s.idx)):
         inv, core = gen.build(slot)
         stem = gen.file_stem(slot, inv)
@@ -570,8 +667,18 @@ def main(argv=None) -> dict:
         rel = f"inbox/{slot.day:%Y/%m/%d}/{stem}.pdf"
         pdf = render_pdf(inv)
         pages = len(pdfium.PdfDocument(pdf))
+        stamp_over = None
         if slot.scanned:
-            pdf = scan(pdf, slot.key, gen.rng, slot.day)
+            target = None
+            if slot.hard_scan:
+                stamp_over = gen.rng.choice(slot.key, "stamp_over", STAMP_TARGETS)
+                if stamp_over == "line_net":
+                    ln = gen.rng.choice(slot.key, "stamp_over.line", inv["lines"])
+                    target = (stamp_over, f"{ln['line_net']:,.2f}")
+                else:
+                    target = (stamp_over, f"{inv[stamp_over]:,.2f}")
+                hard += 1
+            pdf = scan(pdf, slot.key, gen.rng, slot.day, hard=slot.hard_scan, stamp_over=target)
             scanned += 1
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_bytes(pdf)
@@ -580,7 +687,7 @@ def main(argv=None) -> dict:
         if slot.duplicate_of:
             o = gen.plan(*slot.duplicate_of)
             orig_stem = stems.get(slot.duplicate_of) or gen.file_stem(o, core["invoice"])
-        rec = truth_record(inv, slot, stem, rel, pages, core, orig_stem)
+        rec = truth_record(inv, slot, stem, rel, pages, core, orig_stem, stamp_over)
         (root / "_truth").mkdir(parents=True, exist_ok=True)
         (root / "_truth" / f"{stem}.json").write_text(json.dumps(rec, indent=2, default=to_json))
 
@@ -603,7 +710,7 @@ def main(argv=None) -> dict:
         for s in gen.suppliers])
 
     summary = {"mode": args.mode, "window": f"{start}..{run_date}", "env": args.env,
-               "invoices": len(slots), "scanned": scanned, "templates": dict(sorted(templates.items())),
+               "invoices": len(slots), "scanned": scanned, "hard_scans": hard, "templates": dict(sorted(templates.items())),
                "problems": dict(sorted(counts.items()))}
     log.info("run summary %s", json.dumps(summary))
     return summary

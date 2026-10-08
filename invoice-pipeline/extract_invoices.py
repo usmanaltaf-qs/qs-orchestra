@@ -7,9 +7,13 @@ always schema-shaped JSON. (Current models reject forced tool_choice; structured
 same guarantee.) Spec: .claude/skills/invoice-processing/references/extraction.md
 
 Reads   {input}/inbox/**/*.pdf
-Writes  {output}/extracted/invoices/run=<run_id>.parquet
-        {output}/extracted/invoice_lines/run=<run_id>.parquet
+Writes  {output}/extracted/invoices/run=<run_id>-<chunk>.parquet       (flushed every FLUSH_EVERY files)
+        {output}/extracted/invoice_lines/run=<run_id>-<chunk>.parquet
         {output}/extracted/processed_files/manifest.parquet   one row per (file_hash, prompt_version)
+        {output}/extracted/inbox_files/run=<run_id>.parquet   every PDF path the first time it's seen
+
+Extraction is cached by file hash, but every inbox *file* is an invoice: a byte-identical re-send
+gets an inbox_files row (and is caught as a duplicate downstream) without a second API call.
 
 Never reads _truth/. Logs file-hash prefixes and counts only, never document content.
 """
@@ -34,6 +38,7 @@ log = setup_logging("extract_invoices")
 
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+FLUSH_EVERY = 20      # write results every N files
 RATE_LIMIT_WAITS = 4  # extra waits of 15s, 30s, 60s, 120s after the SDK gives up on a 429
 REQUIRED = ("supplier_name", "invoice_number", "invoice_date", "total_gross")
 
@@ -86,6 +91,7 @@ INVOICE_COLS = META_COLS + (
 LINE_COLS = ("file_hash VARCHAR, run_id VARCHAR, prompt_version VARCHAR, line_no INTEGER, description VARCHAR, "
              "sku VARCHAR, quantity DECIMAL(12,3), unit_price DECIMAL(12,2), vat_rate DECIMAL(5,4), "
              "line_net DECIMAL(12,2)")
+INBOX_COLS = "file_path VARCHAR, file_hash VARCHAR, run_id VARCHAR, first_seen_at TIMESTAMPTZ"
 MANIFEST_COLS = ("file_hash VARCHAR, prompt_version VARCHAR, file_path VARCHAR, status VARCHAR, model VARCHAR, "
                  "run_id VARCHAR, extracted_at TIMESTAMPTZ")
 
@@ -195,6 +201,16 @@ def extract_one(client, model: str, effort: str, system: str, path: Path) -> dic
     return {"meta": meta, "data": data}
 
 
+def safe_extract_one(client, model: str, effort: str, system: str, path: Path) -> dict:
+    """extract_one, but an unexpected per-file error (e.g. the file vanished) becomes a failed row
+    instead of taking down the run. Logs the exception type only."""
+    try:
+        return extract_one(client, model, effort, system, path)
+    except Exception as e:  # noqa: BLE001
+        return {"data": None, "meta": {"model": model, "input_tokens": 0, "output_tokens": 0, "latency_s": 0,
+                                       "attempts": 0, "status": "failed", "error": f"error: {type(e).__name__}"}}
+
+
 def to_rows(rel: str, fhash: str, run_id: str, at: datetime, prompt_version: str, res: dict):
     d = res["data"] or {}
     num = lambda x: money(x) if isinstance(x, (int, float)) else None  # noqa: E731
@@ -224,6 +240,14 @@ def read_manifest(path: Path) -> dict:
     rows = duckdb.sql(f"SELECT * FROM read_parquet('{path}')").fetchall()
     cols = [c.split()[0] for c in MANIFEST_COLS.split(", ")]
     return {(r[0], r[1]): dict(zip(cols, r)) for r in rows}
+
+
+def seen_paths(out_root: Path) -> set[str]:
+    files = list((out_root / "extracted" / "inbox_files").glob("*.parquet"))
+    if not files:
+        return set()
+    return {r[0] for r in duckdb.sql(
+        f"SELECT file_path FROM read_parquet('{out_root}/extracted/inbox_files/*.parquet')").fetchall()}
 
 
 def parse_args(argv=None):
@@ -261,9 +285,16 @@ def main(argv=None) -> dict:
     done_hashes = {h for (h, _pv), m in manifest.items() if m["status"] != "failed"}
     failed = {h for (h, pv), m in manifest.items() if pv == args.prompt_version and m["status"] == "failed"}
 
+    run_at = datetime.now(timezone.utc)
+    run_id = run_at.strftime("%Y%m%dT%H%M%SZ")
+    known_paths = seen_paths(out_root)
+    new_inbox = []
     todo, skipped = [], 0
     for path in sorted((in_root / "inbox").rglob("*.pdf")):
         fhash = file_hash(path)
+        rel = str(path.relative_to(in_root))
+        if rel not in known_paths:
+            new_inbox.append({"file_path": rel, "file_hash": fhash, "run_id": run_id, "first_seen_at": run_at})
         if (fhash, args.prompt_version) in manifest and not (fhash in failed and args.retry_failed):
             skipped += 1                      # already done at this prompt version
         elif fhash in done_hashes and not args.reprocess:
@@ -274,17 +305,32 @@ def main(argv=None) -> dict:
             todo.append((path, fhash))
     if args.limit:
         todo = todo[:args.limit]
-    log.info("files: %d to extract, %d skipped (prompt %s, model %s)", len(todo), skipped,
-             args.prompt_version, model)
+    log.info("files: %d new in inbox, %d to extract, %d skipped (prompt %s, model %s)", len(new_inbox),
+             len(todo), skipped, args.prompt_version, model)
+    if new_inbox:
+        write_parquet(out_root / "extracted" / "inbox_files" / f"run={run_id}.parquet", INBOX_COLS, new_inbox,
+                      order_by="file_path")
     if not todo:
-        return {"extracted": 0, "skipped": skipped}
+        return {"extracted": 0, "skipped": skipped, "new_inbox_files": len(new_inbox)}
 
     client = anthropic.Anthropic(max_retries=4)
-    run_at = datetime.now(timezone.utc)
-    run_id = run_at.strftime("%Y%m%dT%H%M%SZ")
     inv_rows, line_rows = [], []
+    chunk = {"n": 0, "inv": 0, "lines": 0}
+
+    def flush():
+        """Persist what's done so far, so a crash never loses paid-for extractions."""
+        if chunk["inv"] == len(inv_rows):
+            return
+        k = chunk["n"]
+        write_parquet(out_root / "extracted" / "invoices" / f"run={run_id}-{k:03d}.parquet", INVOICE_COLS,
+                      inv_rows[chunk["inv"]:], order_by="file_path")
+        write_parquet(out_root / "extracted" / "invoice_lines" / f"run={run_id}-{k:03d}.parquet", LINE_COLS,
+                      line_rows[chunk["lines"]:], order_by="file_hash, line_no")
+        write_parquet(manifest_path, MANIFEST_COLS, list(manifest.values()), order_by="file_path, prompt_version")
+        chunk.update(n=k + 1, inv=len(inv_rows), lines=len(line_rows))
+
     with ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-        futures = {pool.submit(extract_one, client, model, args.effort, system, p): (p, h) for p, h in todo}
+        futures = {pool.submit(safe_extract_one, client, model, args.effort, system, p): (p, h) for p, h in todo}
         for fut in as_completed(futures):
             path, fhash = futures[fut]
             res = fut.result()
@@ -298,12 +344,9 @@ def main(argv=None) -> dict:
             manifest[(fhash, args.prompt_version)] = {
                 "file_hash": fhash, "prompt_version": args.prompt_version, "file_path": rel,
                 "status": m["status"], "model": m["model"], "run_id": run_id, "extracted_at": run_at}
-
-    write_parquet(out_root / "extracted" / "invoices" / f"run={run_id}.parquet", INVOICE_COLS, inv_rows,
-                  order_by="file_path")
-    write_parquet(out_root / "extracted" / "invoice_lines" / f"run={run_id}.parquet", LINE_COLS, line_rows,
-                  order_by="file_hash, line_no")
-    write_parquet(manifest_path, MANIFEST_COLS, list(manifest.values()), order_by="file_path, prompt_version")
+            if len(inv_rows) - chunk["inv"] >= FLUSH_EVERY:
+                flush()
+    flush()
 
     statuses = {s: sum(r["status"] == s for r in inv_rows) for s in ("ok", "needs_review", "failed")}
     summary = {"run_id": run_id, "extracted": len(inv_rows), "skipped": skipped, **statuses,

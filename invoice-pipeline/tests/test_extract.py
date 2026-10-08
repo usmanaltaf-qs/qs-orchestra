@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import duckdb
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -81,3 +82,26 @@ def test_idempotent_by_hash(inbox):
     assert len(calls) == 6  # ...only a deliberate re-extract
     ex.main(["--input", str(root), "--prompt-version", "v2", "--reprocess"])
     assert len(calls) == 6
+    # ...but every inbox file is recorded once, including the byte-identical copy
+    paths = sorted(ex.seen_paths(root))
+    assert len(paths) == 4 and any("copy_of_inv0" in p for p in paths)
+    import duckdb
+    n = duckdb.sql(f"select count(*) from read_parquet('{root}/extracted/inbox_files/*.parquet')").fetchone()[0]
+    assert n == 4
+
+
+def test_per_file_errors_dont_lose_the_run(inbox, monkeypatch):
+    root, calls = inbox
+
+    def flaky(client, model, effort, system, path):
+        if path.name == "inv1.pdf":
+            raise FileNotFoundError(path)
+        calls.append(path.name)
+        return {"data": GOOD, "meta": {"model": model, "input_tokens": 1, "output_tokens": 1, "latency_s": 0,
+                                       "attempts": 1, "status": "ok", "error": None}}
+    monkeypatch.setattr(ex, "extract_one", flaky)
+    out = ex.main(["--input", str(root)])
+    assert out["ok"] == 2 and out["failed"] == 1
+    status = dict(duckdb.sql(f"select split_part(file_path, '/', -1), status from "
+                             f"read_parquet('{root}/extracted/invoices/*.parquet')").fetchall())
+    assert status["inv1.pdf"] == "failed"

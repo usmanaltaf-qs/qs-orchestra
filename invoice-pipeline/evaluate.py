@@ -166,9 +166,12 @@ def report(rows: list[dict], meta: dict, worst: int, show_values: bool) -> str:
                        f"{s['line_f1']:.3f} ({s['lines']}) | {flag} |")
         out.append("")
 
-    table("Scanned vs digital", [("digital", seg(lambda r: not r["scanned"]), TARGETS["digital"]),
-                                 ("scanned", seg(lambda r: r["scanned"]), TARGETS["scanned"]),
-                                 ("all", rows, None)])
+    groups = [("digital", seg(lambda r: not r["scanned"]), TARGETS["digital"]),
+              ("scanned", seg(lambda r: r["scanned"]), TARGETS["scanned"])]
+    if any(r["scan_profile"] == "hard" for r in rows):
+        groups += [("scanned, standard", seg(lambda r: r["scan_profile"] == "standard"), None),
+                   ("scanned, hard (stamp over a figure)", seg(lambda r: r["scan_profile"] == "hard"), None)]
+    table("Scanned vs digital", groups + [("all", rows, None)])
     table("By template", [(f"template {t}", seg(lambda r, t=t: r["template"] == t), None) for t in "ABCD"]
           + [(f"template {t} scanned", seg(lambda r, t=t: r["template"] == t and r["scanned"]), None)
              for t in "ABCD" if seg(lambda r, t=t: r["template"] == t and r["scanned"])])
@@ -197,7 +200,9 @@ def report(rows: list[dict], meta: dict, worst: int, show_values: bool) -> str:
         out.append("No errors.")
     for r in bad:
         wrong = [f for f in FIELDS if not r["fields"][f]]
-        out.append(f"- **{r['file_stem']}** (template {r['template']}, {'scanned' if r['scanned'] else 'digital'}, "
+        kind = "digital" if not r["scanned"] else (
+            f"hard scan, stamp over {r['stamp_over']}" if r["scan_profile"] == "hard" else "scanned")
+        out.append(f"- **{r['file_stem']}** (template {r['template']}, {kind}, "
                    f"status {r['status']}): wrong fields: {', '.join(wrong) or 'none'}; "
                    f"lines matched {r['lines_matched']}/{r['lines_truth']} (extracted {r['lines_extracted']})")
         if show_values:
@@ -227,9 +232,11 @@ def line_diffs(truth_lines, ext_lines):
     return diffs
 
 
-def evaluate(root: Path, prompt_version: str | None = None):
+def evaluate(root: Path, prompt_version: str | None = None, extracted_root: Path | None = None):
+    """Score the latest extraction of every file in root/_truth. extracted_root defaults to root
+    (evals point it at a per-repeat output folder)."""
     truth = load_truth(root)
-    invoices, lines = load_extracted(root, prompt_version)
+    invoices, lines = load_extracted(extracted_root or root, prompt_version)
     rows = []
     for stem, t in sorted(truth.items()):
         ext = invoices.get(stem)
@@ -238,7 +245,7 @@ def evaluate(root: Path, prompt_version: str | None = None):
         ext_lines = lines.get((ext["file_hash"], ext["run_id"]), [])
         s = score_invoice(t, ext, ext_lines)
         rows.append({**s, "file_stem": stem, "file_hash": ext["file_hash"], "template": t["template"],
-                     "scanned": t["scanned"], "status": ext["status"], "model": ext["model"],
+                     "scanned": t["scanned"], "scan_profile": t.get("scan_profile"), "stamp_over": t.get("stamp_over"), "status": ext["status"], "model": ext["model"],
                      "prompt_version": ext["prompt_version"], "input_tokens": ext["input_tokens"] or 0,
                      "output_tokens": ext["output_tokens"] or 0, "truth": t, "ext": ext,
                      "line_diffs": line_diffs(t["lines"], ext_lines)})
@@ -248,6 +255,7 @@ def evaluate(root: Path, prompt_version: str | None = None):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--input", default="./data/invoices/dev", help="env root with _truth/ and extracted/")
+    p.add_argument("--extracted", default=None, help="root holding extracted/ (default: --input)")
     p.add_argument("--prompt-version", default=None, help="only score this prompt version (default: latest)")
     p.add_argument("--worst", type=int, default=5)
     p.add_argument("--show-values", action="store_true",
@@ -255,7 +263,7 @@ def main(argv=None):
     p.add_argument("--no-write", action="store_true")
     args = p.parse_args(argv)
     root = Path(args.input)
-    rows, n_truth = evaluate(root, args.prompt_version)
+    rows, n_truth = evaluate(root, args.prompt_version, Path(args.extracted) if args.extracted else None)
     if not rows:
         raise SystemExit("nothing extracted yet")
 

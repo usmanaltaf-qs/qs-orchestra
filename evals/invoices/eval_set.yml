@@ -1,0 +1,38 @@
+# Invoice eval set. This file IS the dataset: generate_invoices.py is deterministic, so the
+# PDFs, POs and ground truth are regenerated from it and never committed.
+# Written to {output}/invoices/eval/, never to dev or prod.
+seed: 4242
+run_date: "2026-10-07"     # last day of the retail data the generator builds on
+
+subsets:
+  full:                    # nightly: 200 invoices, 50 per template
+    output: ./data/evals/invoices-full
+    days_back: 10
+    invoices_per_day: 20
+  pr:                      # PR runs: 40 invoices, 10 per template
+    output: ./data/evals/invoices-pr
+    days_back: 10
+    invoices_per_day: 4
+
+composition:
+  balance_templates: true  # rotate A-D so small slices still have enough examples
+  scanned_rate: 0.25       # higher than prod on purpose: scanned is where accuracy breaks
+  hard_scan_rate: 0.4      # of scanned: lower DPI, heavy blur/noise, stamp over a total or line amount
+  min_per_problem: 2
+  problems:                # rest is clean (~0.53)
+    price_variance: 0.08
+    qty_over_received: 0.06
+    missing_po: 0.06
+    wrong_po: 0.05
+    duplicate: 0.06
+    arithmetic_error: 0.05
+    unknown_supplier: 0.03
+    extra_charge: 0.06
+    # bank_details_changed (0.05 in the agent-evals reference) needs generator support first
+
+# Gating metrics for the extraction stage. A run fails if a metric is below its floor, or drops
+# by more than its tolerance vs evals/baselines/invoices.json. Mean over repeats is compared.
+gates:
+  critical_field_acc_digital: {floor: 0.98, tolerance: 0.01}
+  critical_field_acc_scanned: {floor: 0.90, tolerance: 0.02}
+  line_f1: {tolerance: 0.02}
