@@ -1,6 +1,8 @@
 -- Invoice lines matched to lines of the PO printed on the invoice: on SKU when the invoice line
 -- has one, otherwise the most similar description on that PO (jaro-winkler >= var). Then joined
 -- to quantities received (all GRNs for the PO line) and the product's category.
+-- Ties (e.g. two products with the same name on one PO, and no SKU column on the invoice) go to
+-- the PO line with the closest unit price, then quantity, then line position.
 -- Unmatched lines (e.g. a delivery charge) keep NULL PO columns.
 with invoices as (
     select invoice_id, file_hash, po_number from {{ ref('int_ap__invoices') }}
@@ -24,7 +26,10 @@ candidates as (
         case
             when l.sku is not null then 1.0
             else jaro_winkler_similarity(l.description_norm, pl.description_norm)
-        end as match_score
+        end as match_score,
+        abs(pl.unit_cost - l.unit_price) as price_gap,
+        abs(pl.qty_ordered - l.quantity) as qty_gap,
+        abs(pl.po_line_no - l.invoice_line_no) as position_gap
     from lines as l
     inner join invoices as i on l.invoice_id = i.invoice_id
     inner join po_lines as pl on i.po_number = pl.po_number
@@ -37,7 +42,10 @@ candidates as (
 best as (
     select *
     from candidates
-    qualify row_number() over (partition by invoice_line_id order by match_score desc, po_line_id) = 1
+    qualify row_number() over (
+        partition by invoice_line_id
+        order by match_score desc, price_gap, qty_gap, position_gap, po_line_id
+    ) = 1
 ),
 
 received as (
