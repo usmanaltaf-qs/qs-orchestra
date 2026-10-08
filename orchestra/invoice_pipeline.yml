@@ -38,7 +38,7 @@ pipeline:
         name: Generate demo invoices
         integration: PYTHON
         integration_job: PYTHON_EXECUTE_SCRIPT
-        connection: python_invoices    # TODO: the id of the python-invoices connection once created
+        connection: python_invoices_78057
         parameters:
           source: GIT
           command: python generate_invoices.py --mode incremental
@@ -56,7 +56,7 @@ pipeline:
         name: Extract invoices with Claude
         integration: PYTHON
         integration_job: PYTHON_EXECUTE_SCRIPT
-        connection: python_invoices
+        connection: python_invoices_78057
         parameters:
           source: GIT
           command: python extract_invoices.py --retry-failed --concurrency 2
@@ -92,7 +92,7 @@ pipeline:
         name: Explain held invoices
         integration: PYTHON
         integration_job: PYTHON_EXECUTE_SCRIPT
-        connection: python_invoices
+        connection: python_invoices_78057
         parameters:
           source: GIT
           # non-blocking by design: LLM failures fall back to a templated note and exit 0
