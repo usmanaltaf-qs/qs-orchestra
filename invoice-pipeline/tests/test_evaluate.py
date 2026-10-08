@@ -64,8 +64,11 @@ def write_extraction(root: Path, truth: dict, data: dict | None, status="ok"):
     run_at = datetime(2026, 10, 8, tzinfo=timezone.utc)
     res = {"data": data, "meta": {"model": "m", "input_tokens": 1, "output_tokens": 1, "latency_s": 0.1,
                                   "attempts": 1, "status": status, "error": None}}
-    inv, lines = ex.to_rows(f"inbox/2026/10/05/{truth['file_stem']}.pdf", "h" + truth["file_stem"], "r1", run_at,
-                            "v1", res)
+    rel = f"inbox/2026/10/05/{truth['file_stem']}.pdf"
+    (root / rel).parent.mkdir(parents=True, exist_ok=True)
+    (root / rel).write_bytes(b"%PDF fake " + truth["file_stem"].encode())
+    truth = {**truth, "file": rel}
+    inv, lines = ex.to_rows(rel, ex.file_hash(root / rel), "r1", run_at, "v1", res)
     ex.write_parquet(root / "extracted/invoices/run=r1.parquet", ex.INVOICE_COLS, [inv])
     ex.write_parquet(root / "extracted/invoice_lines/run=r1.parquet", ex.LINE_COLS, lines)
     (root / "_truth").mkdir(parents=True, exist_ok=True)

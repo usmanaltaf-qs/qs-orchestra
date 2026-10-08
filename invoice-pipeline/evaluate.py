@@ -21,7 +21,7 @@ from pathlib import Path
 
 import duckdb
 
-from common import write_parquet
+from common import file_hash, write_parquet
 
 FIELDS = ["supplier_name", "supplier_vat_number", "invoice_number", "invoice_date", "po_number", "currency",
           "subtotal_net", "vat_total", "total_gross", "bank_sort_code", "bank_account",
@@ -112,15 +112,16 @@ def load_truth(root: Path) -> dict[str, dict]:
 
 
 def load_extracted(root: Path, prompt_version: str | None = None):
-    """Latest extraction per file (optionally for one prompt version), with its lines."""
+    """Latest extraction per file hash (optionally for one prompt version), with its lines.
+    Keyed by content hash because the extractor processes byte-identical files once."""
     inv_glob, line_glob = root / "extracted/invoices/*.parquet", root / "extracted/invoice_lines/*.parquet"
     where = f"WHERE prompt_version = '{prompt_version}'" if prompt_version else ""
     con = duckdb.connect()
     rel = con.sql(f"""
         SELECT * FROM read_parquet('{inv_glob}') {where}
-        QUALIFY row_number() OVER (PARTITION BY file_path ORDER BY extracted_at DESC) = 1""")
+        QUALIFY row_number() OVER (PARTITION BY file_hash ORDER BY extracted_at DESC) = 1""")
     cols = rel.columns
-    invoices = {Path(r[cols.index("file_path")]).stem: dict(zip(cols, r)) for r in rel.fetchall()}
+    invoices = {r[cols.index("file_hash")]: dict(zip(cols, r)) for r in rel.fetchall()}
     lines = defaultdict(list)
     if list(root.glob("extracted/invoice_lines/*.parquet")):
         lrel = con.sql(f"SELECT * FROM read_parquet('{line_glob}') ORDER BY line_no")
@@ -239,7 +240,7 @@ def evaluate(root: Path, prompt_version: str | None = None, extracted_root: Path
     invoices, lines = load_extracted(extracted_root or root, prompt_version)
     rows = []
     for stem, t in sorted(truth.items()):
-        ext = invoices.get(stem)
+        ext = invoices.get(file_hash(root / t["file"]))
         if ext is None:
             continue  # not extracted yet
         ext_lines = lines.get((ext["file_hash"], ext["run_id"]), [])
