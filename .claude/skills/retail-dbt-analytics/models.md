@@ -62,3 +62,22 @@ pre-computes something awkward in a semantic layer (cohorts, period-over-period,
 - `dim_customers` measures recency/`is_active` against the latest order date in the data,
   not today. `value_segment` adds 'No orders' for customers who never bought.
 - `rpt_daily_sales` has no order counts (non-additive across categories).
+
+## Accounts payable (`models/ap/`, tag `ap`)
+Owned by the `invoice-processing` skill (checks and status rules: its `references/matching.md`).
+Sources read `INVOICES_SOURCE_URI` (system/ + extracted/); `INVOICES_EXTRACTED_URI` can point
+extracted/ elsewhere (the matching eval feeds ground truth in that way).
+
+| model | grain | notes |
+|---|---|---|
+| `stg_ap__inbox_files` | inbox file path | `invoice_id` = md5(path): a byte-identical re-send is its own invoice |
+| `stg_ap__extractions` / `_extraction_lines` | file hash (latest run) | values as printed; IDs normalised by `ap_norm_*` macros |
+| `int_ap__invoices` | invoice | inbox file ⨝ extraction of its content |
+| `int_ap__invoice_checks` | invoice × check | `passed` NULL = not applicable; thresholds are `ap_*` vars |
+| `fct_invoice_status` | invoice | duplicate > needs_review > exception > auto_approved; `check_hash` keys explanations |
+| `rpt_ap_daily` | date × final_status × exception_type | an invoice appears once per exception type |
+
+- Line checks (price, quantity, unmatched line, VAT rate) only run against a PO that exists and
+  belongs to the matched supplier; otherwise they're NULL and the PO check holds the invoice.
+- Build with `dbt build --select +tag:ap --indirect-selection cautious` so retail tests whose
+  models aren't selected don't get pulled in. CI's full build excludes `tag:ap`.

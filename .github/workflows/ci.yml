@@ -72,4 +72,6 @@ jobs:
           RETAIL_SOURCE_URI: ../data
         run: |
           dbt deps
-          dbt build --target dev
+          # AP models (tag ap) read invoice-pipeline output, which this job doesn't generate.
+          # They're tested by the matching eval: evals/run_evals.py --suite invoices-matching
+          dbt build --target dev --exclude tag:ap

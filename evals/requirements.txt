@@ -1,0 +1,2 @@
+# Eval harness. Also needs invoice-pipeline/requirements.txt (suites import the pipeline code).
+pyyaml>=6.0

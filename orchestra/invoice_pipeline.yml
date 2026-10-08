@@ -1,0 +1,123 @@
+# Invoice processing: generate (demo only) → extract → dbt_ap → explain → dbt_ap_refresh.
+# Owned by the invoice-processing skill. Separate from the daily retail pipeline (different cadence).
+# Secrets live on the Orchestra connections, never here:
+#   python-invoices connection: ANTHROPIC_API_KEY, ANTHROPIC_MODEL, GCS_HMAC_KEY_ID, GCS_HMAC_SECRET,
+#                               MOTHERDUCK_TOKEN
+#   dbt connection (shared with retail): MOTHERDUCK_TOKEN, GCS_HMAC_KEY_ID, GCS_HMAC_SECRET
+# Every DuckDB task sets HOME=/tmp (Orchestra runners have no $HOME).
+# Each run is cheap when there's nothing new: extraction skips known file hashes, explanations are
+# cached per (invoice, check_hash), and the demo generator writes the same files for a given day.
+version: v1
+name: invoice_processing
+configuration:
+  retries: 1
+  retry_delay: 5   # minutes
+inputs:
+  generate:
+    type: boolean
+    default: true      # demo: synthesise today's invoices. Set false when pointing at a real inbox
+  invoices_per_day:
+    type: number
+    default: 5         # keeps the demo at ~15p/day of extraction
+schedule:
+  # No GCS sensor in Orchestra, so poll: hourly in UK working hours on weekdays
+  - name: Hourly in working hours
+    cron: "0 8-18 ? * MON-FRI *"
+    timezone: Europe/London
+alerts:
+  - name: invoice_pipeline_failed
+    statuses: [FAILED]
+    destinations:
+      - integration: EMAIL
+        destination: usman.altaf@quantspark.com
+pipeline:
+  generate:
+    name: Generate demo invoices
+    tasks:
+      generate_invoices:
+        name: Generate demo invoices
+        integration: PYTHON
+        integration_job: PYTHON_EXECUTE_SCRIPT
+        connection: python_invoices    # TODO: the id of the python-invoices connection once created
+        parameters:
+          source: GIT
+          command: python generate_invoices.py --mode incremental
+          package_manager: PIP
+          python_version: "3.12"
+          build_command: pip install -r requirements.txt
+          project_dir: invoice-pipeline
+          shallow_clone_dirs: invoice-pipeline
+          environment_variables: '{"HOME": "/tmp", "INVOICES_GENERATE": "${{ inputs.generate }}", "INVOICES_INVOICES_PER_DAY": "${{ inputs.invoices_per_day }}", "INVOICES_OUTPUT": "gs://qs_orchestra/dev", "INVOICES_ENV": "dev", "RETAIL_SOURCE_URI": "gs://qs_orchestra/dev", "INVOICES_SEED": "42"}'
+  extract:
+    name: Extract invoices
+    depends_on: [generate]
+    tasks:
+      extract_invoices:
+        name: Extract invoices with Claude
+        integration: PYTHON
+        integration_job: PYTHON_EXECUTE_SCRIPT
+        connection: python_invoices
+        parameters:
+          source: GIT
+          command: python extract_invoices.py --retry-failed --concurrency 2
+          package_manager: PIP
+          python_version: "3.12"
+          build_command: pip install -r requirements.txt
+          project_dir: invoice-pipeline
+          shallow_clone_dirs: invoice-pipeline
+          environment_variables: '{"HOME": "/tmp", "INVOICES_INPUT": "gs://qs_orchestra/dev/invoices/dev"}'
+  dbt_ap:
+    name: dbt AP models
+    depends_on: [extract]
+    tasks:
+      dbt_ap_build:
+        name: dbt build AP
+        integration: DBT_CORE
+        integration_job: DBT_CORE_EXECUTE
+        connection: dbt_retail_93838
+        parameters:
+          # AP models only; stg_retail__products comes from the retail pipeline's build
+          commands: dbt deps; dbt build --select tag:ap --target prod
+          package_manager: PIP
+          python_version: "3.12"
+          use_state_orchestration: false
+          project_dir: retail-dbt
+          shallow_clone_dirs: retail-dbt
+          environment_variables: '{"HOME": "/tmp", "INVOICES_SOURCE_URI": "gs://qs_orchestra/dev/invoices/dev"}'
+  explain:
+    name: Explain exceptions
+    depends_on: [dbt_ap]
+    tasks:
+      explain_exceptions:
+        name: Explain held invoices
+        integration: PYTHON
+        integration_job: PYTHON_EXECUTE_SCRIPT
+        connection: python_invoices
+        parameters:
+          source: GIT
+          # non-blocking by design: LLM failures fall back to a templated note and exit 0
+          command: python explain_exceptions.py --db md:retail_analytics
+          package_manager: PIP
+          python_version: "3.12"
+          build_command: pip install -r requirements.txt
+          project_dir: invoice-pipeline
+          shallow_clone_dirs: invoice-pipeline
+          environment_variables: '{"HOME": "/tmp", "INVOICES_OUTPUT": "gs://qs_orchestra/dev/invoices/dev"}'
+  dbt_ap_refresh:
+    name: dbt AP refresh
+    depends_on: [explain]
+    tasks:
+      dbt_ap_marts:
+        name: dbt build AP marts (with explanations)
+        integration: DBT_CORE
+        integration_job: DBT_CORE_EXECUTE
+        connection: dbt_retail_93838
+        parameters:
+          # picks up the explanations just written; no re-test of staging needed
+          commands: dbt deps; dbt build --select stg_ap__explanations+ --target prod
+          package_manager: PIP
+          python_version: "3.12"
+          use_state_orchestration: false
+          project_dir: retail-dbt
+          shallow_clone_dirs: retail-dbt
+          environment_variables: '{"HOME": "/tmp", "INVOICES_SOURCE_URI": "gs://qs_orchestra/dev/invoices/dev"}'

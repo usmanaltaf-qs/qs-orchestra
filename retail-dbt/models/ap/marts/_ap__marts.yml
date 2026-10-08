@@ -1,0 +1,60 @@
+version: 2
+
+models:
+  - name: fct_invoice_status
+    description: >
+      One row per invoice: status from the rule checks, amounts, queue age and the reviewer
+      note. There's no human review step, so final_status equals status. The LLM never sets
+      either.
+    columns:
+      - name: invoice_id
+        description: Primary key (md5 of the inbox file path).
+        data_tests: [unique, not_null]
+      - name: status
+        description: duplicate > needs_review (extraction not ok) > exception (any check failed) > auto_approved.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [auto_approved, exception, duplicate, needs_review]
+      - name: final_status
+        description: Same as status (no human review step). Separate so a review loop could override it.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [auto_approved, exception, duplicate, needs_review]
+      - name: exception_types
+        description: Comma-separated failed check names, NULL when none failed.
+      - name: check_hash
+        description: Hash of the failed checks and their values. Explanations are cached on (invoice_id, check_hash).
+        data_tests: [not_null]
+      - name: explanation
+        description: Reviewer note for the current failed checks (NULL until explain_exceptions.py has run).
+      - name: suggested_action
+        description: Advice only. Never feeds status or final_status.
+      - name: value_on_hold
+        description: total_gross for exceptions and needs_review, else 0.
+      - name: supplier_id
+        description: Matched supplier, NULL for unknown suppliers.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_ap__suppliers')
+                field: supplier_id
+
+  - name: rpt_ap_daily
+    description: >
+      Daily invoices and values by final status and exception type (exception_type 'none' for
+      invoices with no failed check). An invoice with several exception types appears once per
+      type: sum invoices within a type, not across types.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [received_date, final_status, exception_type]
+    columns:
+      - name: received_date
+        description: Inbox date.
+        data_tests: [not_null]
+      - name: invoices
+        description: Distinct invoices.
