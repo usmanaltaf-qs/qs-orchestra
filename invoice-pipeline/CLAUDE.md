@@ -33,8 +33,9 @@ No human review loop (decided 2026-10-08): status is the rules' output. `final_s
 
 ## Orchestra
 Separate pipeline from the daily retail one: `orchestra/invoice_pipeline.yml`
-(generate → extract → dbt_ap → explain → dbt_ap_refresh), hourly 08:00-18:00 on weekdays
-(Europe/London). Orchestra has no GCS sensor, so it polls; runs with nothing new are near-free.
+(generate → extract → dbt_ap → explain → dbt_ap_refresh). Manual runs only (no schedule):
+`orchestra pipeline run -a invoice_processing`, or the Orchestra UI. If it's ever scheduled,
+note Orchestra has no GCS sensor, so it would have to poll on a cron.
 - Data: `gs://qs_orchestra/dev/invoices/dev/` (`--output gs://qs_orchestra/dev`, env `dev`).
   Warehouse: MotherDuck `md:retail_analytics` (AP tables next to the retail ones).
 - Python tasks use the `python-invoices` connection: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`,

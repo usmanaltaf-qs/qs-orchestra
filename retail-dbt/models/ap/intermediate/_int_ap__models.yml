@@ -72,3 +72,34 @@ models:
                          bank_details_changed, extraction]
       - name: passed
         description: true = check passed, false = failed, NULL = not applicable.
+
+unit_tests:
+  - name: same_description_lines_match_on_price_and_quantity
+    description: >
+      An invoice without SKUs (template C) whose PO has two products with the same name must
+      match each line to its own PO line, not both to the first one.
+    model: int_ap__invoice_lines_matched
+    given:
+      - input: ref('int_ap__invoices')
+        rows:
+          - {invoice_id: inv1, file_hash: h1, po_number: PO-1}
+      - input: ref('stg_ap__extraction_lines')
+        rows:
+          - {file_hash: h1, invoice_line_no: 2, description_norm: thistle smart accessories, sku: null, quantity: 22, unit_price: 6.54}
+          - {file_hash: h1, invoice_line_no: 4, description_norm: thistle smart accessories, sku: null, quantity: 40, unit_price: 10.64}
+      - input: ref('stg_ap__po_lines')
+        rows:
+          - {po_line_id: PO-1-2, po_number: PO-1, po_line_no: 2, product_id: 10, sku: SKU-10, description_norm: thistle smart accessories, qty_ordered: 22, unit_cost: 6.54}
+          - {po_line_id: PO-1-4, po_number: PO-1, po_line_no: 4, product_id: 20, sku: SKU-20, description_norm: thistle smart accessories, qty_ordered: 40, unit_cost: 10.64}
+      - input: ref('stg_ap__grn_lines')
+        rows:
+          - {po_number: PO-1, po_line_no: 2, qty_received: 22}
+          - {po_number: PO-1, po_line_no: 4, qty_received: 40}
+      - input: ref('stg_retail__products')
+        rows:
+          - {product_id: 10, category: Clothing}
+          - {product_id: 20, category: Clothing}
+    expect:
+      rows:
+        - {invoice_line_id: inv1-2, po_line_id: PO-1-2, qty_received: 22}
+        - {invoice_line_id: inv1-4, po_line_id: PO-1-4, qty_received: 40}
