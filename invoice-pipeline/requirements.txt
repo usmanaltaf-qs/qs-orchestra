@@ -1,0 +1,8 @@
+# Orchestra installs from this file.
+anthropic>=1.0
+duckdb==1.5.5
+reportlab>=4.2
+pillow>=11.0
+pypdfium2>=4.30
+jinja2>=3.1
+python-dotenv>=1.0
