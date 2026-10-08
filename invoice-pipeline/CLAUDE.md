@@ -7,6 +7,7 @@ generate_invoices.py ──► PDFs + POs/GRNs (GCS or ./data/invoices)
 extract_invoices.py  ──► Claude PDF → JSON (structured output) ──► extracted Parquet
 dbt (retail-dbt/models/ap/, tag ap) ──► three-way match ──► fct_invoice_status
 explain_exceptions.py ──► grounded explanation + suggested action per exception
+run_summary.py       ──► summary email (new invoices, held queue, quality, latest evals)
 ```
 No human review loop (decided 2026-10-08): status is the rules' output. `final_status` exists in
 `fct_invoice_status` so one could be added later without changing downstream models.
@@ -27,13 +28,15 @@ No human review loop (decided 2026-10-08): status is the rules' output. `final_s
   Orchestra logs aren't redacted.
 - `explain_exceptions.py` is non-blocking: on LLM failure, use the templated fallback and exit 0.
 - Model from `ANTHROPIC_MODEL`. Check current Anthropic docs, don't hardcode from memory.
-- No exception email for now: the only notification is Orchestra's FAILED alert. Don't add
-  `notify.py` or SMTP secrets unless asked.
+- Email: Orchestra's own SUCCEEDED/FAILED alerts, plus `run_summary.py` (last task) which emails new
+  invoices, the held queue with explanations, quality signals and the latest published evals.
+  SMTP settings live on the `python_invoices_78057` connection only. The summary is non-blocking
+  and only reports what's new since the last email it sent (`{root}/notify/state.json`).
 - Eval and dev data go to their own prefixes. Never write eval or synthetic test data to prod.
 
 ## Orchestra
 Separate pipeline from the daily retail one: `orchestra/invoice_pipeline.yml`
-(generate → extract → dbt_ap → explain → dbt_ap_refresh). Manual runs only (no schedule):
+(generate → extract → dbt_ap → explain → dbt_ap_refresh → summary). Manual runs only (no schedule):
 `orchestra pipeline run -a invoice_processing`, or the Orchestra UI. If it's ever scheduled,
 note Orchestra has no GCS sensor, so it would have to poll on a cron.
 - Data: `gs://qs_orchestra/dev/invoices/dev/` (`--output gs://qs_orchestra/dev`, env `dev`).
@@ -76,7 +79,10 @@ python evals/run_evals.py --suite invoices --subset pr --repeats 1         # ext
 python evals/run_evals.py --suite invoices --subset full --repeats 3       # nightly-sized, ~$18
 python evals/run_evals.py --suite invoices-matching --subset full --extracted evals/results/<run>/<model>/rep1
 python evals/run_evals.py --suite invoices-explain --subset full --repeats 1   # 5 explanations, ~5p
+python invoice-pipeline/run_summary.py --preview /tmp/summary.html             # email as HTML, not sent
 ```
+Add `--publish` to any eval run to copy its results to `gs://qs_orchestra/dev/evals` (or `$EVALS_URI`);
+the summary email shows the latest per suite.
 `dev`'s ground-truth dbt test (`assert_ap_matches_ground_truth`) assumes extraction was right; a
 failure after a real extraction may be an extraction error, so check the extraction eval first.
 Adjust flags to match the CLI as built. Keep this section in sync if they change.
